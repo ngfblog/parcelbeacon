@@ -272,6 +272,44 @@ def test_shipments_can_be_sorted_by_nearest_delivery(tmp_path, monkeypatch):
         assert 'class="shipment shipment-compact"' in page
 
 
+def test_nearest_delivery_is_the_default_sort_order(tmp_path, monkeypatch):
+    app = load_app(tmp_path, monkeypatch)
+    import app as app_module
+
+    with app.test_client() as client:
+        login(client)
+        client.post("/shipments", data={"name": "Later", "tracking_number": "LATER123"})
+        client.post("/shipments", data={"name": "Sooner", "tracking_number": "SOONER123"})
+        with app.app_context():
+            db = app_module.get_db()
+            db.execute("UPDATE shipments SET estimated_delivery='2026-09-25' WHERE tracking_number='LATER123'")
+            db.execute("UPDATE shipments SET estimated_delivery='2026-09-22' WHERE tracking_number='SOONER123'")
+            db.commit()
+        page = client.get("/").data.decode()
+        assert page.index("Sooner") < page.index("Later")
+        assert '<option value="eta_asc" selected>' in page
+
+
+def test_shipments_can_be_searched_and_actions_include_delete(tmp_path, monkeypatch):
+    app = load_app(tmp_path, monkeypatch)
+    with app.test_client() as client:
+        login(client)
+        client.post(
+            "/shipments",
+            data={"name": "Network Cable", "tracking_number": "CABLE123", "source": "Amazon"},
+        )
+        client.post(
+            "/shipments",
+            data={"name": "Planter", "tracking_number": "PLANTER456", "source": "AliExpress"},
+        )
+        response = client.get("/?q=CABLE")
+        assert b"Network Cable" in response.data
+        assert b"Planter" not in response.data
+        assert b'name="q" value="CABLE"' in response.data
+        assert b'data-confirm=' in response.data
+        assert b">\xd7\x9e\xd7\x97\xd7\x99\xd7\xa7\xd7\x94</button>" in response.data
+
+
 def test_ship24_prefers_tracker_id_results(tmp_path, monkeypatch):
     load_app(tmp_path, monkeypatch)
     import app as app_module

@@ -635,17 +635,29 @@ def account_settings():
 @login_required
 def index():
     archived = request.args.get("archived", "0") == "1"
-    sort = request.args.get("sort", "updated")
+    sort = request.args.get("sort", "eta_asc")
+    query = request.args.get("q", "").strip()
     order_by = {
         "updated": "updated_at DESC",
         "eta_asc": "CASE WHEN estimated_delivery IS NULL OR estimated_delivery = '' THEN 1 ELSE 0 END, estimated_delivery ASC, updated_at DESC",
         "eta_desc": "CASE WHEN estimated_delivery IS NULL OR estimated_delivery = '' THEN 1 ELSE 0 END, estimated_delivery DESC, updated_at DESC",
-    }.get(sort, "updated_at DESC")
+    }.get(sort, "CASE WHEN estimated_delivery IS NULL OR estimated_delivery = '' THEN 1 ELSE 0 END, estimated_delivery ASC, updated_at DESC")
     if sort not in {"updated", "eta_asc", "eta_desc"}:
-        sort = "updated"
-    shipments = get_db().execute(
-        f"SELECT * FROM shipments WHERE archived = ? ORDER BY {order_by}", (int(archived),)
-    ).fetchall()
+        sort = "eta_asc"
+    sql = "SELECT * FROM shipments WHERE archived = ?"
+    params = [int(archived)]
+    if query:
+        search_value = f"%{query}%"
+        sql += """ AND (
+            name LIKE ? COLLATE NOCASE OR tracking_number LIKE ? COLLATE NOCASE OR
+            COALESCE(source, '') LIKE ? COLLATE NOCASE OR
+            COALESCE(carrier_code, '') LIKE ? COLLATE NOCASE OR
+            COALESCE(provider_name, '') LIKE ? COLLATE NOCASE OR
+            COALESCE(status, '') LIKE ? COLLATE NOCASE OR
+            COALESCE(latest_event, '') LIKE ? COLLATE NOCASE
+        )"""
+        params.extend([search_value] * 7)
+    shipments = get_db().execute(f"{sql} ORDER BY {order_by}", params).fetchall()
     saved_sources = [
         row["source"]
         for row in get_db().execute(
@@ -660,6 +672,7 @@ def index():
         provider_enabled=any_provider_enabled(),
         sources=sources,
         sort=sort,
+        query=query,
     )
 
 
