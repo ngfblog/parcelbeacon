@@ -1,12 +1,14 @@
 # ParcelBeacon
 
-ParcelBeacon is a lightweight, single-user shipment dashboard designed for Unraid. It stores shipment metadata and event history locally in SQLite, polls the Ship24 Tracking API, and sends status-change notifications through Gotify.
+ParcelBeacon is a lightweight, single-user shipment dashboard designed for Unraid. It stores shipment metadata and event history locally in SQLite, uses Track123 as the primary tracking provider with an optional Ship24 fallback, and sends status-change notifications through Gotify.
 
 ## Features
 
 - Responsive Hebrew dashboard with compact horizontal shipment cards
 - Sorting by nearest or farthest estimated delivery date
 - Automatic carrier detection
+- Track123 primary provider with automatic Ship24 fallback
+- Tracking provider shown for every shipment
 - Automatic background polling
 - Shipment event history
 - Shipment editing, including tracking number corrections
@@ -25,7 +27,8 @@ ParcelBeacon is a lightweight, single-user shipment dashboard designed for Unrai
 ## Requirements
 
 - Unraid with Docker Compose or Portainer
-- A Ship24 API key for automatic tracking
+- A Track123 API key for automatic tracking
+- Optional Ship24 API key for fallback tracking
 - Optional Gotify server and application token
 
 ## Recommended installation on Unraid
@@ -42,7 +45,7 @@ ParcelBeacon is a lightweight, single-user shipment dashboard designed for Unrai
 3. Open **Docker > Add Container**.
 4. Select **ParcelBeacon** from the **Template** list.
 5. Generate a session key with `openssl rand -hex 32` and paste it into **Secret Key**.
-6. Enter a username, a strong password, and optional Ship24 and Gotify credentials.
+6. Enter a username, a strong password, a Track123 API key, and optional Ship24 and Gotify credentials.
 7. Keep **Network Type** set to **Bridge**, then click **Apply**.
 8. Open `http://UNRAID-IP:8090`.
 
@@ -65,7 +68,7 @@ The persistent appdata directory is assigned to Unraid's standard `nobody:users`
    openssl rand -hex 32
    ```
 
-5. Edit `.env` and set `SECRET_KEY`, `APP_PASSWORD`, `SHIP24_API_KEY`, and `GOTIFY_TOKEN`.
+5. Edit `.env` and set `SECRET_KEY`, `APP_PASSWORD`, `TRACK123_API_KEY`, and any optional Ship24 or Gotify credentials.
 6. Build and start the container:
 
    ```bash
@@ -83,7 +86,8 @@ Persistent data is stored in `/mnt/cache/appdata/parcelbeacon`.
 | `SECRET_KEY` | Yes | None | Flask session signing secret |
 | `APP_USERNAME` | No | `admin` | Web login username |
 | `APP_PASSWORD` | Recommended | Empty | Enables login protection when set |
-| `SHIP24_API_KEY` | For updates | Empty | Ship24 Tracking API key |
+| `TRACK123_API_KEY` | For updates | Empty | Primary Track123 Tracking API key |
+| `SHIP24_API_KEY` | No | Empty | Optional Ship24 fallback API key |
 | `DESTINATION_COUNTRY_CODE` | No | `IL` | Destination country hint used to improve courier detection |
 | `POLL_INTERVAL_MINUTES` | No | `60` | Poll interval; minimum is 15 minutes |
 | `GOTIFY_URL` | No | Empty | Gotify base URL |
@@ -117,7 +121,7 @@ docker compose up -d --build
 
 ## Provider notes
 
-ParcelBeacon does not scrape carrier websites. Automatic updates require a supported tracking API. Carrier availability, quotas, and pricing are controlled by Ship24. The dashboard remains usable without an API key for manually recording and organizing tracking numbers.
+ParcelBeacon does not scrape carrier websites. Track123 is queried first. Ship24 is queried only when Track123 is unavailable or does not yet provide useful tracking data. Carrier availability, quotas, and pricing are controlled by the providers. The dashboard remains usable without an API key for manually recording and organizing tracking numbers.
 
 ## License
 

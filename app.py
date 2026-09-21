@@ -36,6 +36,12 @@ EVENT_TRANSLATIONS = {
     "shipment received": "המשלוח התקבל",
     "information received": "פרטי המשלוח התקבלו",
     "customs clearance": "המשלוח בטיפול המכס",
+    "arrived at customs": "המשלוח הגיע למכס",
+    "customs clearance completed": "שחרור המשלוח מהמכס הושלם",
+    "departed country of origin": "המשלוח יצא ממדינת המוצא",
+    "arrived at destination country": "המשלוח הגיע למדינת היעד",
+    "handed over to last mile carrier": "המשלוח הועבר לחברת המסירה המקומית",
+    "delivery attempt failed": "ניסיון המסירה נכשל",
 }
 LOCATION_TRANSLATIONS = {"lod": "לוד", "israel": "ישראל"}
 COURIER_NAMES = {
@@ -56,7 +62,13 @@ def status_he(value):
 def event_he(value):
     if not value:
         return ""
-    return EVENT_TRANSLATIONS.get(value.strip().lower(), value)
+    normalized = value.strip().lower()
+    if normalized in EVENT_TRANSLATIONS:
+        return EVENT_TRANSLATIONS[normalized]
+    for english, hebrew in EVENT_TRANSLATIONS.items():
+        if english in normalized:
+            return hebrew
+    return value
 
 
 @app.template_filter("location_he")
@@ -96,6 +108,11 @@ def courier_name(value):
     if not value:
         return "טרם זוהתה"
     return COURIER_NAMES.get(value.strip().lower(), value)
+
+
+@app.template_filter("provider_name")
+def provider_name(value):
+    return {"track123": "Track123", "ship24": "Ship24"}.get((value or "").lower(), "טרם נקבע")
 
 
 def save_product_image(upload, shipment_id):
@@ -190,6 +207,13 @@ def init_db():
             db.execute("ALTER TABLE shipments ADD COLUMN provider_tracker_id TEXT")
         if "image_filename" not in columns:
             db.execute("ALTER TABLE shipments ADD COLUMN image_filename TEXT")
+        if "track123_registered" not in columns:
+            db.execute("ALTER TABLE shipments ADD COLUMN track123_registered INTEGER NOT NULL DEFAULT 0")
+        if "ship24_tracker_id" not in columns:
+            db.execute("ALTER TABLE shipments ADD COLUMN ship24_tracker_id TEXT")
+            db.execute(
+                "UPDATE shipments SET ship24_tracker_id=provider_tracker_id WHERE provider_name='ship24'"
+            )
 
 
 def get_auth_settings():
@@ -292,7 +316,58 @@ class Ship24Client:
         )
 
 
-provider = Ship24Client()
+class Track123Client:
+    base_url = "https://api.track123.com/gateway/open-api"
+
+    def __init__(self):
+        self.api_key = os.getenv("TRACK123_API_KEY", "").strip()
+
+    @property
+    def enabled(self):
+        return bool(self.api_key)
+
+    def _request(self, method, path, **kwargs):
+        response = requests.request(
+            method,
+            f"{self.base_url}{path}",
+            headers={
+                "Track123-Api-Secret": self.api_key,
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            },
+            timeout=30,
+            **kwargs,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if payload.get("code") != "00000":
+            raise RuntimeError(payload.get("msg") or "Track123 returned an error")
+        return payload.get("data", {})
+
+    def register(self, tracking_number):
+        body = [{"trackNo": tracking_number, "country": os.getenv("DESTINATION_COUNTRY_CODE", "IL")}]
+        return self._request("POST", "/tk/v2.1/track/import", json=body)
+
+    def get_tracking(self, tracking_number, carrier_code=""):
+        track_info = {"trackNo": tracking_number}
+        if carrier_code:
+            track_info["courierCode"] = carrier_code
+        data = self._request(
+            "POST",
+            "/tk/v2.1/track/query",
+            json={"trackNoInfos": [track_info], "queryPageSize": 1},
+        )
+        accepted = data.get("accepted") or {}
+        content = accepted.get("content") if isinstance(accepted, dict) else accepted
+        return content[0] if content else None
+
+
+ship24_provider = Ship24Client()
+track123_provider = Track123Client()
+
+
+def any_provider_enabled():
+    return track123_provider.enabled or ship24_provider.enabled
 
 
 def send_gotify(title, message, priority=5):
@@ -308,7 +383,7 @@ def send_gotify(title, message, priority=5):
     ).raise_for_status()
 
 
-def normalize_tracking(data):
+def normalize_ship24_tracking(data):
     shipment = data.get("shipment", {})
     checkpoints = data.get("events") or []
     checkpoints = sorted(
@@ -327,65 +402,153 @@ def normalize_tracking(data):
         "estimated_delivery": delivery.get("estimatedDeliveryDate") or "",
         "carrier_code": courier_codes[0] if courier_codes else "",
         "events": checkpoints,
+        "latest_event_time": latest.get("occurrenceDatetime") or "",
+        "provider_name": "ship24",
     }
 
 
+TRACK123_STATUS_MAP = {
+    "INIT": "pending",
+    "NO_RECORD": "notfound",
+    "INFO_RECEIVED": "info_received",
+    "IN_TRANSIT": "in_transit",
+    "WAITING_DELIVERY": "out_for_delivery",
+    "DELIVERY_FAILED": "failed_attempt",
+    "ABNORMAL": "exception",
+    "DELIVERED": "delivered",
+    "EXPIRED": "expired",
+}
+
+
+def normalize_track123_tracking(data):
+    logistics = data.get("localLogisticsInfo") or {}
+    details = logistics.get("trackingDetails") or []
+    last_mile = ((data.get("lastMileInfo") or {}).get("openApiWayBillInfo") or {})
+    if not details:
+        details = last_mile.get("trackingDetails") or []
+    events = []
+    for index, item in enumerate(details):
+        events.append(
+            {
+                "order": len(details) - index,
+                "occurrenceDatetime": item.get("eventTimeZeroUTC") or item.get("eventTime") or "",
+                "status": item.get("eventDetail") or "",
+                "location": item.get("address") or "",
+                "statusCode": item.get("transitSubStatus") or "",
+                "courierCode": logistics.get("courierCode") or last_mile.get("courierCode") or "",
+            }
+        )
+    events.sort(key=lambda event: event.get("occurrenceDatetime") or "", reverse=True)
+    latest = events[0] if events else {}
+    transit_status = (data.get("transitStatus") or "INIT").upper()
+    status = TRACK123_STATUS_MAP.get(transit_status, "unknown")
+    substatus = data.get("transitSubStatus") or latest.get("statusCode") or ""
+    if transit_status == "WAITING_DELIVERY" and "PICKUP" in substatus.upper():
+        status = "available_for_pickup"
+    return {
+        "status": status,
+        "substatus": substatus,
+        "latest_event": latest.get("status") or "",
+        "latest_location": latest.get("location") or "",
+        "estimated_delivery": data.get("expectedDelivery") or "",
+        "carrier_code": logistics.get("courierCode") or last_mile.get("courierCode") or "",
+        "events": events,
+        "latest_event_time": latest.get("occurrenceDatetime") or data.get("lastTrackingTime") or "",
+        "provider_name": "track123",
+    }
+
+
+# Backward-compatible name used by older tests and extensions.
+normalize_tracking = normalize_ship24_tracking
+
+
+def tracking_result_is_useful(result):
+    return bool(result and (result["events"] or result["latest_event"] or result["status"] not in {"pending", "notfound", "unknown"}))
+
+
+def save_tracking_result(db, shipment, result, notify=True):
+    carrier = result["carrier_code"] or shipment["carrier_code"] or ""
+    old_status = shipment["status"]
+    old_event = shipment["latest_event"] or ""
+    now = utc_now()
+    db.execute(
+        """UPDATE shipments SET carrier_code=?, status=?, substatus=?, latest_event=?,
+           latest_location=?, estimated_delivery=?, provider_name=?, provider_registered=1,
+           last_checked=?, updated_at=? WHERE id=?""",
+        (carrier, result["status"], result["substatus"], result["latest_event"],
+         result["latest_location"], result["estimated_delivery"], result["provider_name"],
+         now, now, shipment["id"]),
+    )
+    for event in result["events"]:
+        event_time = event.get("occurrenceDatetime") or ""
+        description = event.get("status") or ""
+        location = event.get("location") or ""
+        key = f"{event_time}|{description}|{location}"
+        db.execute(
+            "INSERT OR IGNORE INTO events (shipment_id,event_key,event_time,description,location,created_at) VALUES (?,?,?,?,?,?)",
+            (shipment["id"], key, event_time, description, location, now),
+        )
+    db.commit()
+    changed = old_status != result["status"] or (result["latest_event"] and old_event != result["latest_event"])
+    if notify and changed:
+        send_gotify(
+            f"ParcelBeacon: {shipment['name']}",
+            f"מצב: {STATUS_LABELS.get(result['status'], result['status'])}\n{result['latest_event']}\n{result['latest_location']}".strip(),
+            7 if result["status"] in ("exception", "failed_attempt") else 5,
+        )
+
+
 def refresh_shipment(shipment_id, notify=True):
-    if not provider.enabled:
-        raise RuntimeError("SHIP24_API_KEY is not configured")
+    if not any_provider_enabled():
+        raise RuntimeError("No tracking API key is configured")
     with app.app_context():
         db = get_db()
         shipment = db.execute("SELECT * FROM shipments WHERE id = ?", (shipment_id,)).fetchone()
         if not shipment:
             return
-        carrier = shipment["carrier_code"] or ""
-        tracker_id = shipment["provider_tracker_id"] or ""
-        if shipment["provider_name"] != "ship24" or not tracker_id:
-            tracker = provider.register(shipment["tracking_number"], carrier)
-            tracker_id = tracker.get("trackerId", "")
-            db.execute(
-                """UPDATE shipments SET provider_name='ship24', provider_tracker_id=?,
-                   provider_registered=1, updated_at=? WHERE id=?""",
-                (tracker_id, utc_now(), shipment_id),
-            )
-            db.commit()
-        raw = provider.get_tracking(shipment["tracking_number"], tracker_id)
-        if not raw:
-            db.execute(
-                "UPDATE shipments SET provider_name='ship24', provider_registered=1, last_checked=?, updated_at=? WHERE id=?",
-                (utc_now(), utc_now(), shipment_id),
-            )
-            db.commit()
-            return
-        result = normalize_tracking(raw)
-        carrier = result["carrier_code"] or carrier
-        old_status = shipment["status"]
-        old_event = shipment["latest_event"] or ""
+        errors = []
+
+        if track123_provider.enabled:
+            try:
+                if not shipment["track123_registered"]:
+                    track123_provider.register(shipment["tracking_number"])
+                    db.execute(
+                        "UPDATE shipments SET track123_registered=1, updated_at=? WHERE id=?",
+                        (utc_now(), shipment_id),
+                    )
+                    db.commit()
+                raw = track123_provider.get_tracking(shipment["tracking_number"])
+                result = normalize_track123_tracking(raw) if raw else None
+                if tracking_result_is_useful(result):
+                    save_tracking_result(db, shipment, result, notify=notify)
+                    return
+            except Exception as exc:
+                errors.append(f"Track123: {exc}")
+
+        if ship24_provider.enabled:
+            try:
+                tracker_id = shipment["ship24_tracker_id"] or shipment["provider_tracker_id"] or ""
+                if not tracker_id:
+                    tracker = ship24_provider.register(shipment["tracking_number"], shipment["carrier_code"] or "")
+                    tracker_id = tracker.get("trackerId", "")
+                    db.execute(
+                        "UPDATE shipments SET ship24_tracker_id=?, provider_tracker_id=?, updated_at=? WHERE id=?",
+                        (tracker_id, tracker_id, utc_now(), shipment_id),
+                    )
+                    db.commit()
+                raw = ship24_provider.get_tracking(shipment["tracking_number"], tracker_id)
+                result = normalize_ship24_tracking(raw) if raw else None
+                if tracking_result_is_useful(result):
+                    save_tracking_result(db, shipment, result, notify=notify)
+                    return
+            except Exception as exc:
+                errors.append(f"Ship24: {exc}")
+
         now = utc_now()
-        db.execute(
-            """UPDATE shipments SET carrier_code=?, status=?, substatus=?, latest_event=?,
-               latest_location=?, estimated_delivery=?, provider_registered=1,
-               last_checked=?, updated_at=? WHERE id=?""",
-            (carrier, result["status"], result["substatus"], result["latest_event"],
-             result["latest_location"], result["estimated_delivery"], now, now, shipment_id),
-        )
-        for event in result["events"]:
-            event_time = event.get("occurrenceDatetime") or ""
-            description = event.get("status") or ""
-            location = event.get("location") or ""
-            key = f"{event_time}|{description}|{location}"
-            db.execute(
-                "INSERT OR IGNORE INTO events (shipment_id,event_key,event_time,description,location,created_at) VALUES (?,?,?,?,?,?)",
-                (shipment_id, key, event_time, description, location, now),
-            )
+        db.execute("UPDATE shipments SET last_checked=?, updated_at=? WHERE id=?", (now, now, shipment_id))
         db.commit()
-        changed = old_status != result["status"] or (result["latest_event"] and old_event != result["latest_event"])
-        if notify and changed:
-            send_gotify(
-                f"ParcelBeacon: {shipment['name']}",
-                f"מצב: {STATUS_LABELS.get(result['status'], result['status'])}\n{result['latest_event']}\n{result['latest_location']}".strip(),
-                7 if result["status"] in ("exception", "failed_attempt") else 5,
-            )
+        if errors and len(errors) == int(track123_provider.enabled) + int(ship24_provider.enabled):
+            raise RuntimeError("; ".join(errors))
 
 
 def refresh_all(notify=True):
@@ -401,7 +564,7 @@ def refresh_all(notify=True):
 def polling_worker():
     time.sleep(30)
     while True:
-        if provider.enabled:
+        if any_provider_enabled():
             refresh_all(notify=True)
         time.sleep(POLL_INTERVAL_MINUTES * 60)
 
@@ -494,7 +657,7 @@ def index():
         "index.html",
         shipments=shipments,
         archived=archived,
-        provider_enabled=provider.enabled,
+        provider_enabled=any_provider_enabled(),
         sources=sources,
         sort=sort,
     )
@@ -532,7 +695,7 @@ def add_shipment():
     except ValueError as exc:
         flash(f"המשלוח נשמר ללא תמונה: {exc}", "error")
     flash("המשלוח נוסף בהצלחה.", "success")
-    if provider.enabled:
+    if any_provider_enabled():
         try:
             refresh_shipment(cursor.lastrowid, notify=False)
         except Exception as exc:
@@ -596,7 +759,8 @@ def edit_shipment(shipment_id):
                             """UPDATE shipments SET name=?, tracking_number=?, carrier_code=?, source=?,
                                status='pending', substatus=NULL, latest_event=NULL, latest_location=NULL,
                                estimated_delivery=NULL, provider_registered=0, provider_name=NULL,
-                               provider_tracker_id=NULL, last_checked=NULL, image_filename=?, updated_at=? WHERE id=?""",
+                               provider_tracker_id=NULL, track123_registered=0, ship24_tracker_id=NULL,
+                               last_checked=NULL, image_filename=?, updated_at=? WHERE id=?""",
                             (name, tracking_number, carrier_code, source, image_filename, utc_now(), shipment_id),
                         )
                     else:
@@ -606,12 +770,12 @@ def edit_shipment(shipment_id):
                         )
                     db.commit()
                     flash("פרטי המשלוח עודכנו בהצלחה.", "success")
-                    if carrier_changed and shipment["provider_tracker_id"] and provider.enabled:
+                    if carrier_changed and shipment["ship24_tracker_id"] and ship24_provider.enabled:
                         try:
-                            provider.update_courier(shipment["provider_tracker_id"], carrier_code)
+                            ship24_provider.update_courier(shipment["ship24_tracker_id"], carrier_code)
                         except Exception as exc:
                             flash(f"הפרטים נשמרו, אך עדכון חברת השילוח ב־Ship24 נכשל: {exc}", "error")
-                    if tracking_changed and provider.enabled:
+                    if tracking_changed and any_provider_enabled():
                         try:
                             refresh_shipment(shipment_id, notify=False)
                         except Exception as exc:
@@ -680,7 +844,7 @@ def delete_shipment(shipment_id):
 
 @app.get("/health")
 def health():
-    return jsonify(status="ok", provider_configured=provider.enabled)
+    return jsonify(status="ok", provider_configured=any_provider_enabled())
 
 
 init_db()

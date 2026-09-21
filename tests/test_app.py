@@ -287,3 +287,111 @@ def test_ship24_prefers_tracker_id_results(tmp_path, monkeypatch):
     result = client.get_tracking("TRACK123", "tracker-123")
     assert calls == [("GET", "/trackers/tracker-123/results")]
     assert result["shipment"]["statusMilestone"] == "in_transit"
+
+
+def test_track123_query_uses_v21_api(tmp_path, monkeypatch):
+    load_app(tmp_path, monkeypatch)
+    import app as app_module
+
+    client = app_module.Track123Client()
+    calls = []
+
+    def fake_request(method, path, **kwargs):
+        calls.append((method, path, kwargs["json"]))
+        return {"accepted": {"content": [{"trackNo": "DSVPH005472484"}]}}
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    result = client.get_tracking("DSVPH005472484")
+    assert calls == [
+        (
+            "POST",
+            "/tk/v2.1/track/query",
+            {"trackNoInfos": [{"trackNo": "DSVPH005472484"}], "queryPageSize": 1},
+        )
+    ]
+    assert result["trackNo"] == "DSVPH005472484"
+
+
+def test_track123_tracking_response_is_normalized(tmp_path, monkeypatch):
+    load_app(tmp_path, monkeypatch)
+    import app as app_module
+
+    result = app_module.normalize_track123_tracking(
+        {
+            "trackNo": "DSVPH005472484",
+            "transitStatus": "IN_TRANSIT",
+            "transitSubStatus": "IN_TRANSIT_01",
+            "expectedDelivery": "2026-09-25",
+            "localLogisticsInfo": {
+                "courierCode": "cainiao",
+                "trackingDetails": [
+                    {
+                        "address": "Customs",
+                        "eventTimeZeroUTC": "2026-09-17T08:08:28Z",
+                        "eventDetail": "Arrived at customs",
+                        "transitSubStatus": "IN_TRANSIT_01",
+                    }
+                ],
+            },
+        }
+    )
+
+    assert result["provider_name"] == "track123"
+    assert result["status"] == "in_transit"
+    assert result["latest_event"] == "Arrived at customs"
+    assert result["carrier_code"] == "cainiao"
+    assert result["estimated_delivery"] == "2026-09-25"
+
+
+def test_track123_is_primary_and_ship24_is_not_called_when_useful(tmp_path, monkeypatch):
+    monkeypatch.setenv("TRACK123_API_KEY", "track123-test-key")
+    monkeypatch.setenv("SHIP24_API_KEY", "ship24-test-key")
+    flask_app = load_app(tmp_path, monkeypatch)
+    import app as app_module
+
+    track123_calls = []
+    ship24_calls = []
+
+    monkeypatch.setattr(
+        app_module.track123_provider,
+        "register",
+        lambda tracking_number: track123_calls.append(("register", tracking_number)) or {},
+    )
+    monkeypatch.setattr(
+        app_module.track123_provider,
+        "get_tracking",
+        lambda tracking_number: track123_calls.append(("query", tracking_number)) or {
+            "transitStatus": "IN_TRANSIT",
+            "localLogisticsInfo": {
+                "courierCode": "cainiao",
+                "trackingDetails": [
+                    {
+                        "eventTimeZeroUTC": "2026-09-17T08:08:28Z",
+                        "eventDetail": "Arrived at customs",
+                        "address": "Customs",
+                    }
+                ],
+            },
+        },
+    )
+    monkeypatch.setattr(
+        app_module.ship24_provider,
+        "get_tracking",
+        lambda *args, **kwargs: ship24_calls.append(args),
+    )
+
+    with flask_app.app_context():
+        db = app_module.get_db()
+        now = app_module.utc_now()
+        cursor = db.execute(
+            "INSERT INTO shipments (name,tracking_number,created_at,updated_at) VALUES (?,?,?,?)",
+            ("AliExpress parcel", "DSVPH005472484", now, now),
+        )
+        db.commit()
+        app_module.refresh_shipment(cursor.lastrowid, notify=False)
+        shipment = db.execute("SELECT * FROM shipments WHERE id=?", (cursor.lastrowid,)).fetchone()
+
+    assert track123_calls == [("register", "DSVPH005472484"), ("query", "DSVPH005472484")]
+    assert ship24_calls == []
+    assert shipment["provider_name"] == "track123"
+    assert shipment["carrier_code"] == "cainiao"

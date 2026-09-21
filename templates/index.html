@@ -47,7 +47,7 @@
     </div>
     <div class="compact-main">
       <div class="compact-title"><h3><a href="{{ url_for('shipment_detail', shipment_id=item.id) }}">{{ item.name }}</a></h3><span class="status {{ item.status|lower }}">{{ item.status|status_he }}</span></div>
-      <p class="source">{{ item.source or 'מקור לא צוין' }} · חברת שילוח: {{ item.carrier_code|courier_name }}</p>
+      <p class="source">{{ item.source or 'מקור לא צוין' }} · חברת שילוח: {{ item.carrier_code|courier_name }} · מקור מעקב: {{ item.provider_name|provider_name }}</p>
       <code>{{ item.tracking_number }}</code>
       <p class="event">{{ (item.latest_event|event_he) if item.latest_event else 'ממתין לעדכון המעקב הראשון.' }}{% if item.latest_location %} · {{ item.latest_location|location_he }}{% endif %}</p>
       {% if (item.source or '')|lower == 'aliexpress' and item.status == 'pending' %}<p class="tracking-hint">לא נמצא עדכון: ודא שזה מספר המעקב מדף ההזמנה ולא מספר ההזמנה.</p>{% endif %}
