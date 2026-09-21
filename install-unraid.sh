@@ -2,7 +2,7 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-IMAGE_NAME="parcelbeacon:1.0.0"
+IMAGE_NAME="ghcr.io/ngfblog/parcelbeacon:latest"
 APPDATA_DIR="/mnt/cache/appdata/parcelbeacon"
 TEMPLATE_DIR="/boot/config/plugins/dockerMan/templates-user"
 
@@ -13,7 +13,7 @@ fi
 
 mkdir -p "${APPDATA_DIR}" "${TEMPLATE_DIR}"
 chown 99:100 "${APPDATA_DIR}"
-docker build --pull --tag "${IMAGE_NAME}" "${PROJECT_DIR}"
+docker pull "${IMAGE_NAME}"
 install -m 0644 "${PROJECT_DIR}/unraid/my-parcelbeacon.xml" "${TEMPLATE_DIR}/my-parcelbeacon.xml"
 
 echo

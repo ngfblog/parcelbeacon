@@ -99,3 +99,42 @@ def test_account_change_requires_current_password(tmp_path, monkeypatch):
             follow_redirects=True,
         )
         assert "הסיסמה הנוכחית שגויה".encode() in response.data
+
+
+def test_ship24_tracking_response_is_normalized(tmp_path, monkeypatch):
+    load_app(tmp_path, monkeypatch)
+    import app as app_module
+
+    result = app_module.normalize_tracking(
+        {
+            "shipment": {
+                "statusMilestone": "available_for_pickup",
+                "statusCode": "delivery_available_for_pickup",
+                "delivery": {"estimatedDeliveryDate": "2026-09-22"},
+            },
+            "events": [
+                {
+                    "eventId": "event-1",
+                    "order": 1,
+                    "occurrenceDatetime": "2026-09-20T10:00:00+03:00",
+                    "status": "Shipment received",
+                    "location": "Tel Aviv",
+                    "courierCode": "israel-post",
+                },
+                {
+                    "eventId": "event-2",
+                    "order": 2,
+                    "occurrenceDatetime": "2026-09-21T10:00:00+03:00",
+                    "status": "Ready for pickup",
+                    "location": "Haifa",
+                    "courierCode": "israel-post",
+                },
+            ],
+        }
+    )
+
+    assert result["status"] == "available_for_pickup"
+    assert result["latest_event"] == "Ready for pickup"
+    assert result["latest_location"] == "Haifa"
+    assert result["carrier_code"] == "israel-post"
+    assert result["estimated_delivery"] == "2026-09-22"

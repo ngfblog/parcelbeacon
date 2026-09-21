@@ -19,7 +19,7 @@ app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "change-this-secret-key")
 app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
 
-STATUS_LABELS = {"pending": "ממתין", "notfound": "לא נמצא", "info_received": "פרטי המשלוח התקבלו", "transit": "בדרך", "in_transit": "בדרך", "pickup": "ממתין לאיסוף", "out_for_delivery": "יצא למסירה", "delivered": "נמסר", "exception": "חריגה", "failed_attempt": "ניסיון מסירה נכשל", "expired": "פג תוקף", "unknown": "לא ידוע"}
+STATUS_LABELS = {"pending": "ממתין", "notfound": "לא נמצא", "info_received": "פרטי המשלוח התקבלו", "transit": "בדרך", "in_transit": "בדרך", "pickup": "ממתין לאיסוף", "available_for_pickup": "ממתין לאיסוף", "out_for_delivery": "יצא למסירה", "delivered": "נמסר", "exception": "חריגה", "failed_attempt": "ניסיון מסירה נכשל", "expired": "פג תוקף", "unknown": "לא ידוע"}
 
 
 @app.template_filter("status_he")
@@ -89,6 +89,11 @@ def init_db():
             );
             """
         )
+        columns = {row[1] for row in db.execute("PRAGMA table_info(shipments)")}
+        if "provider_name" not in columns:
+            db.execute("ALTER TABLE shipments ADD COLUMN provider_name TEXT")
+        if "provider_tracker_id" not in columns:
+            db.execute("ALTER TABLE shipments ADD COLUMN provider_tracker_id TEXT")
 
 
 def get_auth_settings():
@@ -132,11 +137,11 @@ def login_required(view):
     return wrapped
 
 
-class TrackingMoreClient:
-    base_url = "https://api.trackingmore.com/v4"
+class Ship24Client:
+    base_url = "https://api.ship24.com/public/v1"
 
     def __init__(self):
-        self.api_key = os.getenv("TRACKINGMORE_API_KEY", "").strip()
+        self.api_key = os.getenv("SHIP24_API_KEY", "").strip()
 
     @property
     def enabled(self):
@@ -146,40 +151,32 @@ class TrackingMoreClient:
         response = requests.request(
             method,
             f"{self.base_url}{path}",
-            headers={"Tracking-Api-Key": self.api_key, "Content-Type": "application/json"},
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Accept": "application/json",
+                "Content-Type": "application/json; charset=utf-8",
+            },
             timeout=30,
             **kwargs,
         )
         response.raise_for_status()
         payload = response.json()
-        meta = payload.get("meta", {})
-        if meta.get("code") not in (None, 200):
-            raise RuntimeError(meta.get("message", "Tracking provider error"))
-        return payload.get("data")
-
-    def detect(self, tracking_number):
-        data = self._request("POST", "/couriers/detect", json={"tracking_number": tracking_number})
-        if isinstance(data, list) and data:
-            return data[0].get("courier_code", "")
-        return ""
+        return payload.get("data", {})
 
     def register(self, tracking_number, carrier_code=""):
-        body = {"tracking_number": tracking_number}
+        body = {"trackingNumber": tracking_number}
         if carrier_code:
-            body["courier_code"] = carrier_code
-        return self._request("POST", "/trackings/create", json=body)
+            body["courierCode"] = [carrier_code]
+        data = self._request("POST", "/trackers", json=body)
+        return data.get("tracker", {})
 
-    def get_tracking(self, tracking_number, carrier_code=""):
-        params = {"tracking_numbers": tracking_number}
-        if carrier_code:
-            params["courier_code"] = carrier_code
-        data = self._request("GET", "/trackings/get", params=params)
-        if isinstance(data, list):
-            return data[0] if data else None
-        return data
+    def get_tracking(self, tracking_number):
+        data = self._request("GET", f"/trackers/search/{tracking_number}/results")
+        trackings = data.get("trackings", [])
+        return trackings[0] if trackings else None
 
 
-provider = TrackingMoreClient()
+provider = Ship24Client()
 
 
 def send_gotify(title, message, priority=5):
@@ -196,43 +193,54 @@ def send_gotify(title, message, priority=5):
 
 
 def normalize_tracking(data):
-    checkpoints = data.get("origin_info", {}).get("trackinfo") or data.get("tracking_detail") or []
+    shipment = data.get("shipment", {})
+    checkpoints = data.get("events") or []
+    checkpoints = sorted(
+        checkpoints,
+        key=lambda event: (event.get("order", -1), event.get("occurrenceDatetime", "")),
+        reverse=True,
+    )
     latest = checkpoints[0] if checkpoints else {}
-    delivery = data.get("scheduled_delivery_date") or data.get("estimated_delivery_date")
+    delivery = shipment.get("delivery") or {}
+    courier_codes = [event.get("courierCode") for event in checkpoints if event.get("courierCode")]
     return {
-        "status": data.get("delivery_status") or data.get("status") or "unknown",
-        "substatus": data.get("substatus") or "",
-        "latest_event": latest.get("tracking_detail") or latest.get("description") or "",
+        "status": shipment.get("statusMilestone") or latest.get("statusMilestone") or "pending",
+        "substatus": shipment.get("statusCode") or latest.get("statusCode") or "",
+        "latest_event": latest.get("status") or "",
         "latest_location": latest.get("location") or "",
-        "estimated_delivery": delivery or "",
+        "estimated_delivery": delivery.get("estimatedDeliveryDate") or "",
+        "carrier_code": courier_codes[0] if courier_codes else "",
         "events": checkpoints,
     }
 
 
 def refresh_shipment(shipment_id, notify=True):
     if not provider.enabled:
-        raise RuntimeError("TRACKINGMORE_API_KEY is not configured")
+        raise RuntimeError("SHIP24_API_KEY is not configured")
     with app.app_context():
         db = get_db()
         shipment = db.execute("SELECT * FROM shipments WHERE id = ?", (shipment_id,)).fetchone()
         if not shipment:
             return
-        carrier = shipment["carrier_code"] or provider.detect(shipment["tracking_number"])
-        if not shipment["provider_registered"]:
-            try:
-                provider.register(shipment["tracking_number"], carrier)
-            except requests.HTTPError as exc:
-                if exc.response is None or exc.response.status_code not in (400, 409):
-                    raise
-        raw = provider.get_tracking(shipment["tracking_number"], carrier)
+        carrier = shipment["carrier_code"] or ""
+        if shipment["provider_name"] != "ship24":
+            tracker = provider.register(shipment["tracking_number"], carrier)
+            db.execute(
+                """UPDATE shipments SET provider_name='ship24', provider_tracker_id=?,
+                   provider_registered=1, updated_at=? WHERE id=?""",
+                (tracker.get("trackerId", ""), utc_now(), shipment_id),
+            )
+            db.commit()
+        raw = provider.get_tracking(shipment["tracking_number"])
         if not raw:
             db.execute(
-                "UPDATE shipments SET carrier_code = ?, provider_registered = 1, last_checked = ?, updated_at = ? WHERE id = ?",
-                (carrier, utc_now(), utc_now(), shipment_id),
+                "UPDATE shipments SET provider_name='ship24', provider_registered=1, last_checked=?, updated_at=? WHERE id=?",
+                (utc_now(), utc_now(), shipment_id),
             )
             db.commit()
             return
         result = normalize_tracking(raw)
+        carrier = result["carrier_code"] or carrier
         old_status = shipment["status"]
         old_event = shipment["latest_event"] or ""
         now = utc_now()
@@ -244,8 +252,8 @@ def refresh_shipment(shipment_id, notify=True):
              result["latest_location"], result["estimated_delivery"], now, now, shipment_id),
         )
         for event in result["events"]:
-            event_time = event.get("checkpoint_date") or event.get("Date") or ""
-            description = event.get("tracking_detail") or event.get("description") or ""
+            event_time = event.get("occurrenceDatetime") or ""
+            description = event.get("status") or ""
             location = event.get("location") or ""
             key = f"{event_time}|{description}|{location}"
             db.execute(

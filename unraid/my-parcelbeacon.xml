@@ -1,32 +1,32 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>ParcelBeacon</Name>
-  <Repository>parcelbeacon:1.0.0</Repository>
-  <Registry/>
+  <Repository>ghcr.io/ngfblog/parcelbeacon:latest</Repository>
+  <Registry>https://github.com/ngfblog/parcelbeacon/pkgs/container/parcelbeacon</Registry>
   <Network>bridge</Network>
   <MyIP/>
   <Shell>sh</Shell>
   <Privileged>false</Privileged>
-  <Support/>
-  <Project/>
+  <Support>https://github.com/ngfblog/parcelbeacon/issues</Support>
+  <Project>https://github.com/ngfblog/parcelbeacon</Project>
   <Overview>Private shipment dashboard with Hebrew RTL interface, automatic tracking updates, SQLite storage, and Gotify notifications.</Overview>
   <Category>Tools:</Category>
   <WebUI>http://[IP]:[PORT:8090]/</WebUI>
-  <TemplateURL/>
-  <Icon>https://raw.githubusercontent.com/selfhst/icons/main/png/parcel.png</Icon>
+  <TemplateURL>https://raw.githubusercontent.com/ngfblog/parcelbeacon/main/unraid/my-parcelbeacon.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/ngfblog/parcelbeacon/main/static/parcelbeacon-icon.png</Icon>
   <ExtraParams/>
   <PostArgs/>
   <CPUset/>
   <DonateText/>
   <DonateLink/>
-  <Requires>Build the local image by running ./install-unraid.sh before creating the container.</Requires>
+  <Requires>A free Ship24 API key is required for automatic tracking updates.</Requires>
   <Config Name="WebUI Port" Target="8090" Default="8090" Mode="tcp" Description="ParcelBeacon web interface" Type="Port" Display="always" Required="true" Mask="false">8090</Config>
   <Config Name="Application Data" Target="/data" Default="/mnt/cache/appdata/parcelbeacon" Mode="rw" Description="SQLite database and persistent application data" Type="Path" Display="always" Required="true" Mask="false">/mnt/cache/appdata/parcelbeacon</Config>
   <Config Name="Time Zone" Target="TZ" Default="UTC" Mode="" Description="Container time zone, for example Europe/London" Type="Variable" Display="always" Required="true" Mask="false">UTC</Config>
   <Config Name="Secret Key" Target="SECRET_KEY" Default="" Mode="" Description="Long random session signing key" Type="Variable" Display="always" Required="true" Mask="true"/>
   <Config Name="Username" Target="APP_USERNAME" Default="admin" Mode="" Description="Web interface username" Type="Variable" Display="always" Required="true" Mask="false">admin</Config>
   <Config Name="Password" Target="APP_PASSWORD" Default="" Mode="" Description="Web interface password" Type="Variable" Display="always" Required="true" Mask="true"/>
-  <Config Name="TrackingMore API Key" Target="TRACKINGMORE_API_KEY" Default="" Mode="" Description="TrackingMore API v4 key; leave empty for manual mode" Type="Variable" Display="always" Required="false" Mask="true"/>
+  <Config Name="Ship24 API Key" Target="SHIP24_API_KEY" Default="" Mode="" Description="Ship24 Tracking API key; keep this value private" Type="Variable" Display="always" Required="false" Mask="true"/>
   <Config Name="Polling Interval" Target="POLL_INTERVAL_MINUTES" Default="60" Mode="" Description="Automatic update interval in minutes; minimum 15" Type="Variable" Display="always" Required="true" Mask="false">60</Config>
   <Config Name="Gotify URL" Target="GOTIFY_URL" Default="" Mode="" Description="Gotify base URL, for example http://GOTIFY-HOST:PORT" Type="Variable" Display="always" Required="false" Mask="false"/>
   <Config Name="Gotify Token" Target="GOTIFY_TOKEN" Default="" Mode="" Description="Gotify application token" Type="Variable" Display="always" Required="false" Mask="true"/>
