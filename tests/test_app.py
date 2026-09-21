@@ -54,3 +54,48 @@ def test_duplicate_tracking_number(tmp_path, monkeypatch):
         client.post("/shipments", data=payload)
         response = client.post("/shipments", data=payload, follow_redirects=True)
         assert "כבר קיים במערכת".encode() in response.data
+
+
+def test_account_credentials_can_be_changed_in_web_ui(tmp_path, monkeypatch):
+    app = load_app(tmp_path, monkeypatch)
+    with app.test_client() as client:
+        login(client)
+        response = client.post(
+            "/settings/account",
+            data={
+                "username": "new-user",
+                "current_password": "test-password",
+                "new_password": "new-test-password",
+                "confirm_password": "new-test-password",
+            },
+            follow_redirects=True,
+        )
+        assert "עודכנו בהצלחה".encode() in response.data
+        client.post("/logout")
+        assert client.post(
+            "/login",
+            data={"username": "admin", "password": "test-password"},
+        ).status_code == 200
+        response = client.post(
+            "/login",
+            data={"username": "new-user", "password": "new-test-password"},
+            follow_redirects=True,
+        )
+        assert "המשלוחים שלי".encode() in response.data
+
+
+def test_account_change_requires_current_password(tmp_path, monkeypatch):
+    app = load_app(tmp_path, monkeypatch)
+    with app.test_client() as client:
+        login(client)
+        response = client.post(
+            "/settings/account",
+            data={
+                "username": "new-user",
+                "current_password": "wrong-password",
+                "new_password": "new-test-password",
+                "confirm_password": "new-test-password",
+            },
+            follow_redirects=True,
+        )
+        assert "הסיסמה הנוכחית שגויה".encode() in response.data

@@ -9,9 +9,12 @@
 <body>
   <header>
     <a class="brand" href="{{ url_for('index') }}">📦 ParcelBeacon</a>
-    {% if session.get('authenticated') %}
-    <form method="post" action="{{ url_for('logout') }}"><button class="link-button">יציאה</button></form>
-    {% endif %}
+    <nav class="header-actions">
+      <a class="header-link" href="{{ url_for('account_settings') }}">הגדרות חשבון</a>
+      {% if session.get('authenticated') %}
+      <form method="post" action="{{ url_for('logout') }}"><button class="link-button">יציאה</button></form>
+      {% endif %}
+    </nav>
   </header>
   <main>
     {% for category, message in get_flashed_messages(with_categories=true) %}

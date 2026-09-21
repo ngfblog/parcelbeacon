@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}הגדרות חשבון · ParcelBeacon{% endblock %}
+{% block content %}
+<section class="panel narrow account-settings">
+  <h1>הגדרות חשבון</h1>
+  <p class="muted">כאן ניתן לשנות את שם המשתמש והסיסמה המשמשים לכניסה למערכת.</p>
+  <form method="post" class="stack">
+    <label>שם משתמש
+      <input name="username" value="{{ username }}" autocomplete="username" maxlength="64" required>
+    </label>
+    <label>סיסמה נוכחית
+      <input type="password" name="current_password" autocomplete="current-password" required>
+    </label>
+    <label>סיסמה חדשה <span>(אפשר להשאיר ריק כדי לא לשנות)</span>
+      <input type="password" name="new_password" autocomplete="new-password" minlength="10">
+    </label>
+    <label>אימות סיסמה חדשה
+      <input type="password" name="confirm_password" autocomplete="new-password" minlength="10">
+    </label>
+    <button type="submit">שמירת שינויים</button>
+  </form>
+</section>
+{% endblock %}

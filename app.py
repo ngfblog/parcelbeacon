@@ -8,6 +8,7 @@ from functools import wraps
 
 import requests
 from flask import Flask, flash, g, jsonify, redirect, render_template, request, session, url_for
+from werkzeug.security import check_password_hash, generate_password_hash
 
 
 DATA_DIR = os.getenv("DATA_DIR", "/data")
@@ -80,14 +81,52 @@ def init_db():
                 UNIQUE(shipment_id, event_key),
                 FOREIGN KEY(shipment_id) REFERENCES shipments(id) ON DELETE CASCADE
             );
+            CREATE TABLE IF NOT EXISTS auth_settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                username TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
             """
         )
+
+
+def get_auth_settings():
+    row = get_db().execute(
+        "SELECT username, password_hash FROM auth_settings WHERE id = 1"
+    ).fetchone()
+    if row:
+        return {
+            "username": row["username"],
+            "password_hash": row["password_hash"],
+            "password": None,
+        }
+    return {
+        "username": os.getenv("APP_USERNAME", "admin"),
+        "password_hash": None,
+        "password": os.getenv("APP_PASSWORD", ""),
+    }
+
+
+def verify_credentials(username, password):
+    credentials = get_auth_settings()
+    username_matches = hmac.compare_digest(username, credentials["username"])
+    if credentials["password_hash"]:
+        password_matches = check_password_hash(credentials["password_hash"], password)
+    else:
+        password_matches = hmac.compare_digest(password, credentials["password"])
+    return username_matches and password_matches
+
+
+def authentication_enabled():
+    credentials = get_auth_settings()
+    return bool(credentials["password_hash"] or credentials["password"])
 
 
 def login_required(view):
     @wraps(view)
     def wrapped(*args, **kwargs):
-        if os.getenv("APP_PASSWORD") and not session.get("authenticated"):
+        if authentication_enabled() and not session.get("authenticated"):
             return redirect(url_for("login", next=request.path))
         return view(*args, **kwargs)
     return wrapped
@@ -244,12 +283,11 @@ def polling_worker():
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        expected_user = os.getenv("APP_USERNAME", "admin")
-        expected_password = os.getenv("APP_PASSWORD", "")
         supplied_user = request.form.get("username", "")
         supplied_password = request.form.get("password", "")
-        if hmac.compare_digest(supplied_user, expected_user) and hmac.compare_digest(supplied_password, expected_password):
+        if verify_credentials(supplied_user, supplied_password):
             session["authenticated"] = True
+            session["username"] = supplied_user
             return redirect(url_for("index"))
         flash("שם המשתמש או הסיסמה שגויים.", "error")
     return render_template("login.html")
@@ -259,6 +297,49 @@ def login():
 def logout():
     session.clear()
     return redirect(url_for("login"))
+
+
+@app.route("/settings/account", methods=["GET", "POST"])
+@login_required
+def account_settings():
+    credentials = get_auth_settings()
+    if request.method == "POST":
+        current_password = request.form.get("current_password", "")
+        new_username = request.form.get("username", "").strip()
+        new_password = request.form.get("new_password", "")
+        confirm_password = request.form.get("confirm_password", "")
+
+        if not verify_credentials(credentials["username"], current_password):
+            flash("הסיסמה הנוכחית שגויה.", "error")
+        elif not new_username or len(new_username) > 64:
+            flash("שם המשתמש חייב להכיל בין תו אחד ל־64 תווים.", "error")
+        elif new_password and len(new_password) < 10:
+            flash("הסיסמה החדשה חייבת להכיל לפחות 10 תווים.", "error")
+        elif new_password != confirm_password:
+            flash("אימות הסיסמה החדשה אינו תואם.", "error")
+        else:
+            if new_password:
+                password_hash = generate_password_hash(new_password)
+            elif credentials["password_hash"]:
+                password_hash = credentials["password_hash"]
+            else:
+                password_hash = generate_password_hash(current_password)
+            get_db().execute(
+                """INSERT INTO auth_settings (id, username, password_hash, updated_at)
+                   VALUES (1, ?, ?, ?)
+                   ON CONFLICT(id) DO UPDATE SET
+                     username=excluded.username,
+                     password_hash=excluded.password_hash,
+                     updated_at=excluded.updated_at""",
+                (new_username, password_hash, utc_now()),
+            )
+            get_db().commit()
+            session["authenticated"] = True
+            session["username"] = new_username
+            flash("פרטי הכניסה עודכנו בהצלחה.", "success")
+            return redirect(url_for("account_settings"))
+
+    return render_template("account_settings.html", username=credentials["username"])
 
 
 @app.get("/")

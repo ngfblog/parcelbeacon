@@ -12,6 +12,7 @@ ParcelBeacon is a lightweight, single-user shipment dashboard designed for Unrai
 - Gotify notifications only when a shipment changes
 - SQLite storage with WAL mode
 - Optional login protection
+- Account page for changing the login username and password
 - Docker health check and log rotation
 
 ## Requirements
@@ -79,6 +80,12 @@ Persistent data is stored in `/mnt/cache/appdata/parcelbeacon`.
 | `POLL_INTERVAL_MINUTES` | No | `60` | Poll interval; minimum is 15 minutes |
 | `GOTIFY_URL` | No | Empty | Gotify base URL |
 | `GOTIFY_TOKEN` | No | Empty | Gotify application token |
+
+`APP_USERNAME` and `APP_PASSWORD` provide the initial login credentials. After the
+first login, both values can be changed from **Account Settings** in the web UI.
+Web-managed credentials are stored in the SQLite database, and the password is
+stored only as a salted hash. The web-managed credentials take precedence over
+the container environment variables.
 
 ## Backup
 
