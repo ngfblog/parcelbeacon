@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="hero">
+  <div><h1>המשלוחים שלי</h1><p>כל החבילות במקום אחד.</p></div>
+  <div class="tabs"><a class="{{ '' if archived else 'active' }}" href="/">פעילים</a><a class="{{ 'active' if archived else '' }}" href="/?archived=1">ארכיון</a></div>
+</div>
+{% if not provider_enabled %}<div class="notice">ספק המעקב אינו מוגדר. ניתן לשמור משלוחים, אך העדכון האוטומטי מושבת.</div>{% endif %}
+{% if not archived %}
+<section class="panel">
+  <h2>הוספת משלוח</h2>
+  <form method="post" action="{{ url_for('add_shipment') }}" class="add-grid">
+    <label>שם החבילה<input name="name" placeholder="לדוגמה: מתג רשת" required></label>
+    <label>מספר מעקב<input name="tracking_number" placeholder="הזן מספר מעקב" required></label>
+    <label>קוד חברת שילוח <span>(אופציונלי)</span><input name="carrier_code" placeholder="זיהוי אוטומטי"></label>
+    <label>חנות או מקור <span>(אופציונלי)</span><input name="source" placeholder="AliExpress, Amazon, eBay"></label>
+    <button type="submit">הוסף משלוח</button>
+  </form>
+</section>
+{% endif %}
+<div class="toolbar">
+  <span>{{ shipments|length }} משלוחים</span>
+  {% if not archived %}<form method="post" action="{{ url_for('refresh_all_route') }}"><button class="secondary">רענון הכול</button></form>{% endif %}
+</div>
+<section class="cards">
+{% for item in shipments %}
+  <article class="shipment">
+    <div class="shipment-top"><div><span class="status {{ item.status|lower }}">{{ item.status|status_he }}</span><h3><a href="{{ url_for('shipment_detail', shipment_id=item.id) }}">{{ item.name }}</a></h3></div><span class="source">{{ item.source or item.carrier_code or 'חברת שילוח לא ידועה' }}</span></div>
+    <code>{{ item.tracking_number }}</code>
+    <p class="event">{{ item.latest_event or 'ממתין לעדכון המעקב הראשון.' }}</p>
+    {% if item.latest_location %}<p class="muted">📍 {{ item.latest_location }}</p>{% endif %}
+    <div class="meta"><span>בדיקה אחרונה: {{ item.last_checked or 'טרם נבדק' }}</span>{% if item.estimated_delivery %}<span>מסירה משוערת: {{ item.estimated_delivery }}</span>{% endif %}</div>
+    <div class="actions">
+      {% if not archived %}<form method="post" action="{{ url_for('refresh_one', shipment_id=item.id) }}"><button class="secondary">רענון</button></form>{% endif %}
+      <form method="post" action="{{ url_for('archive_shipment', shipment_id=item.id) }}"><input type="hidden" name="archived" value="{{ 0 if archived else 1 }}"><button class="secondary">{{ 'שחזור' if archived else 'העברה לארכיון' }}</button></form>
+    </div>
+  </article>
+{% else %}<div class="empty">עדיין אין כאן משלוחים.</div>{% endfor %}
+</section>
+{% endblock %}

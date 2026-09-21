@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}{{ shipment.name }} · ParcelBeacon{% endblock %}
+{% block content %}
+<a class="back" href="{{ url_for('index') }}">חזרה ←</a>
+<section class="panel detail-head">
+  <span class="status {{ shipment.status|lower }}">{{ shipment.status|status_he }}</span>
+  <h1>{{ shipment.name }}</h1><code>{{ shipment.tracking_number }}</code>
+  <p>{{ shipment.latest_event or 'ממתין לעדכון המעקב הראשון.' }}</p>
+  <div class="actions"><form method="post" action="{{ url_for('refresh_one', shipment_id=shipment.id) }}"><button>רענון עכשיו</button></form><form method="post" action="{{ url_for('delete_shipment', shipment_id=shipment.id) }}" onsubmit="return confirm('למחוק את המשלוח ואת כל ההיסטוריה שלו?')"><button class="danger">מחיקה</button></form></div>
+</section>
+<section class="panel"><h2>היסטוריית מעקב</h2><div class="timeline">
+{% for event in events %}<div class="timeline-item"><time>{{ event.event_time or 'זמן לא ידוע' }}</time><strong>{{ event.description or 'עדכון מצב' }}</strong>{% if event.location %}<span>{{ event.location }}</span>{% endif %}</div>{% else %}<p class="muted">עדיין אין אירועי מעקב.</p>{% endfor %}
+</div></section>
+{% endblock %}
