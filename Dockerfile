@@ -6,8 +6,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt && useradd --uid 99 --gid 100 --no-create-home parcelbeacon
-COPY --chown=parcelbeacon:parcelbeacon . .
-RUN mkdir -p /data && chown parcelbeacon:parcelbeacon /data
+COPY --chown=99:100 . .
+RUN mkdir -p /data && chown 99:100 /data
 
 USER parcelbeacon
 EXPOSE 8090
