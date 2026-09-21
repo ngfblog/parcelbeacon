@@ -10,6 +10,8 @@ ParcelBeacon is a lightweight, single-user shipment dashboard designed for Unrai
 - Automatic background polling
 - Shipment event history
 - Shipment editing, including tracking number corrections
+- Source selection with a replaceable preset list and custom text entry
+- Direct link to the Ship24 shipment dashboard
 - Optional local product images with metadata removal and resizing
 - Hebrew tracking descriptions and Israel-local date formatting
 - Clear detected courier display

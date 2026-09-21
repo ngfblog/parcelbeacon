@@ -71,7 +71,10 @@ def test_existing_shipment_can_be_edited(tmp_path, monkeypatch):
             "/shipments",
             data={"name": "Old Name", "tracking_number": "OLD123", "source": "Old Store"},
         )
-        assert b'value="Old Name"' in client.get("/shipments/1/edit").data
+        edit_page = client.get("/shipments/1/edit").data
+        assert b'value="Old Name"' in edit_page
+        assert b'class="source-picker"' in edit_page
+        assert b'value="Old Store" selected' in edit_page
         response = client.post(
             "/shipments/1/edit",
             data={"name": "New Name", "tracking_number": "NEW456", "carrier_code": "israel-post", "source": "New Store"},
@@ -81,6 +84,15 @@ def test_existing_shipment_can_be_edited(tmp_path, monkeypatch):
         assert b"New Name" in response.data
         assert b"NEW456" in response.data
         assert b"OLD123" not in response.data
+
+
+def test_ship24_dashboard_link_is_available(tmp_path, monkeypatch):
+    app = load_app(tmp_path, monkeypatch)
+    with app.test_client() as client:
+        login(client)
+        response = client.get("/")
+        assert b'https://dashboard.ship24.com/shipment-dashboard' in response.data
+        assert b'rel="noopener noreferrer"' in response.data
 
 
 def test_name_is_generated_when_left_empty(tmp_path, monkeypatch):

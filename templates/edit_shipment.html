@@ -10,8 +10,12 @@
     <label>מספר מעקב<input name="tracking_number" value="{{ shipment.tracking_number }}" required></label>
     <label>קוד חברת שילוח <span>(אופציונלי)</span><input name="carrier_code" value="{{ shipment.carrier_code or '' }}" placeholder="זיהוי אוטומטי"></label>
     <label>חנות או מקור <span>(אופציונלי)</span>
-      <input name="source" value="{{ shipment.source or '' }}" list="source-options" placeholder="בחר מהרשימה או הקלד מקור אחר" autocomplete="off">
-      <datalist id="source-options">{% for source in sources %}<option value="{{ source }}">{% endfor %}</datalist>
+      <select class="source-picker" data-source-target="edit-source">
+        <option value="">בחר מקור מהרשימה</option>
+        {% for source in sources %}<option value="{{ source }}" {{ 'selected' if source == shipment.source else '' }}>{{ source }}</option>{% endfor %}
+        <option value="__custom__">מקור אחר — הקלדה ידנית</option>
+      </select>
+      <input id="edit-source" name="source" value="{{ shipment.source or '' }}" placeholder="או הקלד מקור אחר" autocomplete="off">
     </label>
     {% if shipment.image_filename %}
       <img class="product-image edit-image" src="{{ url_for('shipment_image', filename=shipment.image_filename, v=shipment.updated_at) }}" alt="תמונת {{ shipment.name }}">
