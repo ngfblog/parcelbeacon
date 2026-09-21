@@ -1,0 +1,26 @@
+services:
+  parcelbeacon:
+    container_name: parcelbeacon
+    build:
+      context: .
+    image: parcelbeacon:1.0.0
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    environment:
+      TZ: ${TZ:-UTC}
+      DATA_DIR: /data
+      SECRET_KEY: ${SECRET_KEY}
+      APP_USERNAME: ${APP_USERNAME:-admin}
+      APP_PASSWORD: ${APP_PASSWORD}
+      TRACKINGMORE_API_KEY: ${TRACKINGMORE_API_KEY:-}
+      POLL_INTERVAL_MINUTES: ${POLL_INTERVAL_MINUTES:-60}
+      GOTIFY_URL: ${GOTIFY_URL:-}
+      GOTIFY_TOKEN: ${GOTIFY_TOKEN:-}
+    volumes:
+      - /mnt/cache/appdata/parcelbeacon:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
