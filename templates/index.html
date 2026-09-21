@@ -8,11 +8,17 @@
 {% if not archived %}
 <section class="panel">
   <h2>הוספת משלוח</h2>
-  <form method="post" action="{{ url_for('add_shipment') }}" class="add-grid">
-    <label>שם החבילה<input name="name" placeholder="לדוגמה: מתג רשת" required></label>
+  <form method="post" action="{{ url_for('add_shipment') }}" class="add-grid" enctype="multipart/form-data">
+    <label>שם החבילה <span>(אופציונלי — ייווצר אוטומטית)</span><input name="name" placeholder="לדוגמה: מתג רשת"></label>
     <label>מספר מעקב<input name="tracking_number" placeholder="הזן מספר מעקב" required></label>
     <label>קוד חברת שילוח <span>(אופציונלי)</span><input name="carrier_code" placeholder="זיהוי אוטומטי"></label>
-    <label>חנות או מקור <span>(אופציונלי)</span><input name="source" placeholder="AliExpress, Amazon, eBay"></label>
+    <label>חנות או מקור <span>(אופציונלי)</span>
+      <input name="source" list="source-options" placeholder="בחר מהרשימה או הקלד מקור אחר" autocomplete="off">
+      <datalist id="source-options">
+        {% for source in sources %}<option value="{{ source }}">{% endfor %}
+      </datalist>
+    </label>
+    <label>תמונת מוצר <span>(אופציונלי, עד 8MB)</span><input type="file" name="product_image" accept="image/jpeg,image/png,image/webp"></label>
     <button type="submit">הוסף משלוח</button>
   </form>
 </section>
@@ -24,13 +30,16 @@
 <section class="cards">
 {% for item in shipments %}
   <article class="shipment">
-    <div class="shipment-top"><div><span class="status {{ item.status|lower }}">{{ item.status|status_he }}</span><h3><a href="{{ url_for('shipment_detail', shipment_id=item.id) }}">{{ item.name }}</a></h3></div><span class="source">{{ item.source or item.carrier_code or 'חברת שילוח לא ידועה' }}</span></div>
+    {% if item.image_filename %}<img class="product-image" src="{{ url_for('shipment_image', filename=item.image_filename, v=item.updated_at) }}" alt="תמונת {{ item.name }}" loading="lazy">{% endif %}
+    <div class="shipment-top"><div><span class="status {{ item.status|lower }}">{{ item.status|status_he }}</span><h3><a href="{{ url_for('shipment_detail', shipment_id=item.id) }}">{{ item.name }}</a></h3></div><span class="source">{{ item.source or 'מקור לא צוין' }}</span></div>
     <code>{{ item.tracking_number }}</code>
-    <p class="event">{{ item.latest_event or 'ממתין לעדכון המעקב הראשון.' }}</p>
-    {% if item.latest_location %}<p class="muted">📍 {{ item.latest_location }}</p>{% endif %}
-    <div class="meta"><span>בדיקה אחרונה: {{ item.last_checked or 'טרם נבדק' }}</span>{% if item.estimated_delivery %}<span>מסירה משוערת: {{ item.estimated_delivery }}</span>{% endif %}</div>
+    <p class="courier"><strong>חברת שילוח:</strong> {{ item.carrier_code|courier_name }}</p>
+    <p class="event">{{ (item.latest_event|event_he) if item.latest_event else 'ממתין לעדכון המעקב הראשון.' }}</p>
+    {% if item.latest_location %}<p class="muted">📍 {{ item.latest_location|location_he }}</p>{% endif %}
+    <div class="meta"><span><strong>בדיקה אחרונה:</strong> {{ item.last_checked|datetime_he }}</span>{% if item.estimated_delivery %}<span><strong>מסירה משוערת:</strong> {{ item.estimated_delivery|date_he }}</span>{% endif %}</div>
     <div class="actions">
       {% if not archived %}<form method="post" action="{{ url_for('refresh_one', shipment_id=item.id) }}"><button class="secondary">רענון</button></form>{% endif %}
+      <a class="button secondary" href="{{ url_for('edit_shipment', shipment_id=item.id) }}">עריכה</a>
       <form method="post" action="{{ url_for('archive_shipment', shipment_id=item.id) }}"><input type="hidden" name="archived" value="{{ 0 if archived else 1 }}"><button class="secondary">{{ 'שחזור' if archived else 'העברה לארכיון' }}</button></form>
     </div>
   </article>

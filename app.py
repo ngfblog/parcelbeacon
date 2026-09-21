@@ -3,29 +3,123 @@ import sqlite3
 import threading
 import time
 import hmac
+from pathlib import Path
 from datetime import datetime, timezone
 from functools import wraps
+from zoneinfo import ZoneInfo
 
 import requests
-from flask import Flask, flash, g, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, flash, g, jsonify, redirect, render_template, request, send_from_directory, session, url_for
+from PIL import Image, ImageOps, UnidentifiedImageError
 from werkzeug.security import check_password_hash, generate_password_hash
 
 
 DATA_DIR = os.getenv("DATA_DIR", "/data")
 DATABASE = os.path.join(DATA_DIR, "parcelbeacon.db")
+UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
 POLL_INTERVAL_MINUTES = max(15, int(os.getenv("POLL_INTERVAL_MINUTES", "60")))
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "change-this-secret-key")
-app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
+app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax", MAX_CONTENT_LENGTH=8 * 1024 * 1024)
 
 STATUS_LABELS = {"pending": "ממתין", "notfound": "לא נמצא", "info_received": "פרטי המשלוח התקבלו", "transit": "בדרך", "in_transit": "בדרך", "pickup": "ממתין לאיסוף", "available_for_pickup": "ממתין לאיסוף", "out_for_delivery": "יצא למסירה", "delivered": "נמסר", "exception": "חריגה", "failed_attempt": "ניסיון מסירה נכשל", "expired": "פג תוקף", "unknown": "לא ידוע"}
+COMMON_SOURCES = ["AliExpress", "Amazon", "eBay", "Temu", "SHEIN", "iHerb", "Banggood", "Geekbuying", "דואר ישראל", "חנות מקומית"]
+EVENT_TRANSLATIONS = {
+    "departed from facility": "יצא ממתקן המיון",
+    "arrived at facility": "הגיע למתקן המיון",
+    "in transit": "המשלוח בדרך",
+    "out for delivery": "יצא למסירה",
+    "delivered": "המשלוח נמסר",
+    "available for pickup": "המשלוח ממתין לאיסוף",
+    "ready for pickup": "המשלוח מוכן לאיסוף",
+    "shipment received": "המשלוח התקבל",
+    "information received": "פרטי המשלוח התקבלו",
+    "customs clearance": "המשלוח בטיפול המכס",
+}
+LOCATION_TRANSLATIONS = {"lod": "לוד", "israel": "ישראל"}
+COURIER_NAMES = {
+    "ups": "UPS", "usps": "USPS", "dhl": "DHL", "fedex": "FedEx",
+    "israel-post": "דואר ישראל", "israelpost": "דואר ישראל",
+    "cainiao": "Cainiao", "amazon": "Amazon Logistics", "aramex": "Aramex",
+    "gls": "GLS", "dpd": "DPD", "yanwen": "Yanwen", "4px": "4PX",
+}
 
 
 @app.template_filter("status_he")
 def status_he(value):
     normalized = (value or "unknown").lower()
     return STATUS_LABELS.get(normalized, normalized.replace("_", " "))
+
+
+@app.template_filter("event_he")
+def event_he(value):
+    if not value:
+        return ""
+    return EVENT_TRANSLATIONS.get(value.strip().lower(), value)
+
+
+@app.template_filter("location_he")
+def location_he(value):
+    if not value:
+        return ""
+    return ", ".join(LOCATION_TRANSLATIONS.get(part.strip().lower(), part.strip()) for part in value.split(","))
+
+
+def parse_provider_datetime(value):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+
+
+@app.template_filter("datetime_he")
+def datetime_he(value):
+    parsed = parse_provider_datetime(value)
+    if not parsed:
+        return value or "טרם נבדק"
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(ZoneInfo("Asia/Jerusalem")).strftime("%d/%m/%Y %H:%M")
+
+
+@app.template_filter("date_he")
+def date_he(value):
+    parsed = parse_provider_datetime(value)
+    return parsed.strftime("%d/%m/%Y") if parsed else (value or "")
+
+
+@app.template_filter("courier_name")
+def courier_name(value):
+    if not value:
+        return "טרם זוהתה"
+    return COURIER_NAMES.get(value.strip().lower(), value)
+
+
+def save_product_image(upload, shipment_id):
+    if not upload or not upload.filename:
+        return None
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    filename = f"shipment-{shipment_id}.webp"
+    destination = os.path.join(UPLOAD_DIR, filename)
+    try:
+        with Image.open(upload.stream) as source:
+            image = ImageOps.exif_transpose(source).convert("RGB")
+            image.thumbnail((1200, 1200), Image.Resampling.LANCZOS)
+            image.save(destination, "WEBP", quality=85, method=6)
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise ValueError("יש לבחור קובץ תמונה תקין מסוג JPG, PNG או WebP.") from exc
+    return filename
+
+
+def delete_product_image(filename):
+    if not filename:
+        return
+    path = Path(UPLOAD_DIR, filename)
+    if path.parent == Path(UPLOAD_DIR) and path.is_file():
+        path.unlink()
 
 
 def utc_now():
@@ -94,6 +188,8 @@ def init_db():
             db.execute("ALTER TABLE shipments ADD COLUMN provider_name TEXT")
         if "provider_tracker_id" not in columns:
             db.execute("ALTER TABLE shipments ADD COLUMN provider_tracker_id TEXT")
+        if "image_filename" not in columns:
+            db.execute("ALTER TABLE shipments ADD COLUMN image_filename TEXT")
 
 
 def get_auth_settings():
@@ -357,7 +453,20 @@ def index():
     shipments = get_db().execute(
         "SELECT * FROM shipments WHERE archived = ? ORDER BY updated_at DESC", (int(archived),)
     ).fetchall()
-    return render_template("index.html", shipments=shipments, archived=archived, provider_enabled=provider.enabled)
+    saved_sources = [
+        row["source"]
+        for row in get_db().execute(
+            "SELECT DISTINCT source FROM shipments WHERE source IS NOT NULL AND TRIM(source) <> '' ORDER BY source"
+        ).fetchall()
+    ]
+    sources = list(dict.fromkeys(COMMON_SOURCES + saved_sources))
+    return render_template(
+        "index.html",
+        shipments=shipments,
+        archived=archived,
+        provider_enabled=provider.enabled,
+        sources=sources,
+    )
 
 
 @app.post("/shipments")
@@ -365,19 +474,32 @@ def index():
 def add_shipment():
     name = request.form.get("name", "").strip()
     tracking_number = request.form.get("tracking_number", "").strip()
-    if not name or not tracking_number:
-        flash("יש להזין שם חבילה ומספר מעקב.", "error")
+    source = request.form.get("source", "").strip()
+    if not tracking_number:
+        flash("יש להזין מספר מעקב.", "error")
         return redirect(url_for("index"))
+    if not name:
+        name = f"משלוח מ־{source}" if source else f"משלוח {tracking_number[-6:]}"
     now = utc_now()
     try:
         cursor = get_db().execute(
             "INSERT INTO shipments (name,tracking_number,carrier_code,source,created_at,updated_at) VALUES (?,?,?,?,?,?)",
-            (name, tracking_number, request.form.get("carrier_code", "").strip(), request.form.get("source", "").strip(), now, now),
+            (name, tracking_number, request.form.get("carrier_code", "").strip(), source, now, now),
         )
         get_db().commit()
     except sqlite3.IntegrityError:
         flash("מספר המעקב כבר קיים במערכת.", "error")
         return redirect(url_for("index"))
+    try:
+        image_filename = save_product_image(request.files.get("product_image"), cursor.lastrowid)
+        if image_filename:
+            get_db().execute(
+                "UPDATE shipments SET image_filename=? WHERE id=?",
+                (image_filename, cursor.lastrowid),
+            )
+            get_db().commit()
+    except ValueError as exc:
+        flash(f"המשלוח נשמר ללא תמונה: {exc}", "error")
     flash("המשלוח נוסף בהצלחה.", "success")
     if provider.enabled:
         try:
@@ -397,6 +519,85 @@ def shipment_detail(shipment_id):
         "SELECT * FROM events WHERE shipment_id = ? ORDER BY event_time DESC, id DESC", (shipment_id,)
     ).fetchall()
     return render_template("detail.html", shipment=shipment, events=events)
+
+
+@app.route("/shipments/<int:shipment_id>/edit", methods=["GET", "POST"])
+@login_required
+def edit_shipment(shipment_id):
+    db = get_db()
+    shipment = db.execute("SELECT * FROM shipments WHERE id = ?", (shipment_id,)).fetchone()
+    if not shipment:
+        return ("Not found", 404)
+
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        tracking_number = request.form.get("tracking_number", "").strip()
+        carrier_code = request.form.get("carrier_code", "").strip()
+        source = request.form.get("source", "").strip()
+        if not tracking_number:
+            flash("יש להזין מספר מעקב.", "error")
+        else:
+            if not name:
+                name = f"משלוח מ־{source}" if source else f"משלוח {tracking_number[-6:]}"
+            tracking_changed = tracking_number != shipment["tracking_number"]
+            duplicate = db.execute(
+                "SELECT id FROM shipments WHERE tracking_number=? AND id<>?",
+                (tracking_number, shipment_id),
+            ).fetchone()
+            if duplicate:
+                flash("מספר המעקב כבר קיים במערכת.", "error")
+            else:
+                image_filename = shipment["image_filename"]
+                try:
+                    uploaded_filename = save_product_image(request.files.get("product_image"), shipment_id)
+                except ValueError as exc:
+                    flash(str(exc), "error")
+                else:
+                    if uploaded_filename:
+                        image_filename = uploaded_filename
+                    elif request.form.get("remove_image") == "1":
+                        delete_product_image(image_filename)
+                        image_filename = None
+                    if tracking_changed:
+                        db.execute("DELETE FROM events WHERE shipment_id = ?", (shipment_id,))
+                        db.execute(
+                            """UPDATE shipments SET name=?, tracking_number=?, carrier_code=?, source=?,
+                               status='pending', substatus=NULL, latest_event=NULL, latest_location=NULL,
+                               estimated_delivery=NULL, provider_registered=0, provider_name=NULL,
+                               provider_tracker_id=NULL, last_checked=NULL, image_filename=?, updated_at=? WHERE id=?""",
+                            (name, tracking_number, carrier_code, source, image_filename, utc_now(), shipment_id),
+                        )
+                    else:
+                        db.execute(
+                            "UPDATE shipments SET name=?, carrier_code=?, source=?, image_filename=?, updated_at=? WHERE id=?",
+                            (name, carrier_code, source, image_filename, utc_now(), shipment_id),
+                        )
+                    db.commit()
+                    flash("פרטי המשלוח עודכנו בהצלחה.", "success")
+                    if tracking_changed and provider.enabled:
+                        try:
+                            refresh_shipment(shipment_id, notify=False)
+                        except Exception as exc:
+                            flash(f"הפרטים נשמרו, אך העדכון הראשוני נכשל: {exc}", "error")
+                    return redirect(url_for("shipment_detail", shipment_id=shipment_id))
+
+    saved_sources = [
+        row["source"]
+        for row in db.execute(
+            "SELECT DISTINCT source FROM shipments WHERE source IS NOT NULL AND TRIM(source) <> '' ORDER BY source"
+        ).fetchall()
+    ]
+    return render_template(
+        "edit_shipment.html",
+        shipment=shipment,
+        sources=list(dict.fromkeys(COMMON_SOURCES + saved_sources)),
+    )
+
+
+@app.get("/shipment-images/<path:filename>")
+@login_required
+def shipment_image(filename):
+    return send_from_directory(UPLOAD_DIR, filename, max_age=3600)
 
 
 @app.post("/shipments/<int:shipment_id>/refresh")
@@ -430,6 +631,9 @@ def archive_shipment(shipment_id):
 @app.post("/shipments/<int:shipment_id>/delete")
 @login_required
 def delete_shipment(shipment_id):
+    shipment = get_db().execute("SELECT image_filename FROM shipments WHERE id = ?", (shipment_id,)).fetchone()
+    if shipment:
+        delete_product_image(shipment["image_filename"])
     get_db().execute("DELETE FROM events WHERE shipment_id = ?", (shipment_id,))
     get_db().execute("DELETE FROM shipments WHERE id = ?", (shipment_id,))
     get_db().commit()

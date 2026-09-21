@@ -8,6 +8,10 @@ ParcelBeacon is a lightweight, single-user shipment dashboard designed for Unrai
 - Automatic carrier detection
 - Automatic background polling
 - Shipment event history
+- Shipment editing, including tracking number corrections
+- Optional local product images with metadata removal and resizing
+- Hebrew tracking descriptions and Israel-local date formatting
+- Clear detected courier display
 - Archive and restore workflow
 - Gotify notifications only when a shipment changes
 - SQLite storage with WAL mode
@@ -89,7 +93,7 @@ the container environment variables.
 
 ## Backup
 
-Back up `/mnt/cache/appdata/parcelbeacon`. The SQLite database is the only persistent application file. For a consistent live backup, use SQLite's backup command or stop the container before copying the directory.
+Back up `/mnt/cache/appdata/parcelbeacon`. It contains the SQLite database and the optional `uploads` directory with product images. For a consistent live backup, use SQLite's backup command or stop the container before copying the directory.
 
 ## Update
 

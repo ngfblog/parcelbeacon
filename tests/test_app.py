@@ -1,4 +1,7 @@
 import importlib
+from io import BytesIO
+
+from PIL import Image
 
 
 def load_app(tmp_path, monkeypatch):
@@ -44,6 +47,103 @@ def test_shipment_lifecycle(tmp_path, monkeypatch):
         assert b"Test Parcel" in client.get("/?archived=1").data
         client.post("/shipments/1/delete")
         assert b"Test Parcel" not in client.get("/?archived=1").data
+
+
+def test_source_field_has_common_and_saved_autocomplete_options(tmp_path, monkeypatch):
+    app = load_app(tmp_path, monkeypatch)
+    with app.test_client() as client:
+        login(client)
+        client.post(
+            "/shipments",
+            data={"name": "Custom Store Parcel", "tracking_number": "CUSTOM12345", "source": "My Store"},
+        )
+        response = client.get("/")
+        assert b'datalist id="source-options"' in response.data
+        assert b'value="AliExpress"' in response.data
+        assert b'value="My Store"' in response.data
+
+
+def test_existing_shipment_can_be_edited(tmp_path, monkeypatch):
+    app = load_app(tmp_path, monkeypatch)
+    with app.test_client() as client:
+        login(client)
+        client.post(
+            "/shipments",
+            data={"name": "Old Name", "tracking_number": "OLD123", "source": "Old Store"},
+        )
+        assert b'value="Old Name"' in client.get("/shipments/1/edit").data
+        response = client.post(
+            "/shipments/1/edit",
+            data={"name": "New Name", "tracking_number": "NEW456", "carrier_code": "israel-post", "source": "New Store"},
+            follow_redirects=True,
+        )
+        assert "עודכנו בהצלחה".encode() in response.data
+        assert b"New Name" in response.data
+        assert b"NEW456" in response.data
+        assert b"OLD123" not in response.data
+
+
+def test_name_is_generated_when_left_empty(tmp_path, monkeypatch):
+    app = load_app(tmp_path, monkeypatch)
+    with app.test_client() as client:
+        login(client)
+        response = client.post(
+            "/shipments",
+            data={"name": "", "tracking_number": "AUTO123456", "source": "Amazon"},
+            follow_redirects=True,
+        )
+        assert "משלוח מ־Amazon".encode() in response.data
+
+
+def test_tracking_text_and_dates_are_localised(tmp_path, monkeypatch):
+    app = load_app(tmp_path, monkeypatch)
+    with app.test_request_context():
+        assert app.jinja_env.filters["event_he"]("Departed from Facility") == "יצא ממתקן המיון"
+        assert app.jinja_env.filters["location_he"]("Lod, Israel") == "לוד, ישראל"
+        assert app.jinja_env.filters["datetime_he"]("2026-09-21T07:12:41+00:00") == "21/09/2026 10:12"
+        assert app.jinja_env.filters["date_he"]("2026-09-22T00:00:00.000Z") == "22/09/2026"
+
+
+def test_courier_name_is_displayed(tmp_path, monkeypatch):
+    app = load_app(tmp_path, monkeypatch)
+    with app.test_client() as client:
+        login(client)
+        client.post(
+            "/shipments",
+            data={"name": "UPS Parcel", "tracking_number": "UPS123", "carrier_code": "ups"},
+        )
+        response = client.get("/")
+        assert "חברת שילוח:".encode() in response.data
+        assert b"UPS" in response.data
+
+
+def test_product_image_can_be_added_and_removed(tmp_path, monkeypatch):
+    app = load_app(tmp_path, monkeypatch)
+    image_data = BytesIO()
+    Image.new("RGB", (40, 30), "blue").save(image_data, "PNG")
+    image_data.seek(0)
+    with app.test_client() as client:
+        login(client)
+        response = client.post(
+            "/shipments",
+            data={
+                "name": "Photo Parcel",
+                "tracking_number": "PHOTO123",
+                "product_image": (image_data, "product.png"),
+            },
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
+        assert b"shipment-1.webp" in response.data
+        image_response = client.get("/shipment-images/shipment-1.webp")
+        assert image_response.status_code == 200
+        assert image_response.mimetype == "image/webp"
+        client.post(
+            "/shipments/1/edit",
+            data={"name": "Photo Parcel", "tracking_number": "PHOTO123", "remove_image": "1"},
+            follow_redirects=True,
+        )
+        assert client.get("/shipment-images/shipment-1.webp").status_code == 404
 
 
 def test_duplicate_tracking_number(tmp_path, monkeypatch):

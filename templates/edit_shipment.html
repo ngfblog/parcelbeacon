@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}עריכת {{ shipment.name }} · ParcelBeacon{% endblock %}
+{% block content %}
+<a class="back" href="{{ url_for('shipment_detail', shipment_id=shipment.id) }}">חזרה למשלוח ←</a>
+<section class="panel narrow account-settings">
+  <h1>עריכת משלוח</h1>
+  <p class="muted">אפשר לעדכן את כל פרטי המשלוח הקיים.</p>
+  <form method="post" class="stack" enctype="multipart/form-data">
+    <label>שם החבילה <span>(אופציונלי — ייווצר אוטומטית)</span><input name="name" value="{{ shipment.name }}"></label>
+    <label>מספר מעקב<input name="tracking_number" value="{{ shipment.tracking_number }}" required></label>
+    <label>קוד חברת שילוח <span>(אופציונלי)</span><input name="carrier_code" value="{{ shipment.carrier_code or '' }}" placeholder="זיהוי אוטומטי"></label>
+    <label>חנות או מקור <span>(אופציונלי)</span>
+      <input name="source" value="{{ shipment.source or '' }}" list="source-options" placeholder="בחר מהרשימה או הקלד מקור אחר" autocomplete="off">
+      <datalist id="source-options">{% for source in sources %}<option value="{{ source }}">{% endfor %}</datalist>
+    </label>
+    {% if shipment.image_filename %}
+      <img class="product-image edit-image" src="{{ url_for('shipment_image', filename=shipment.image_filename, v=shipment.updated_at) }}" alt="תמונת {{ shipment.name }}">
+      <label class="checkbox-label"><input type="checkbox" name="remove_image" value="1"> הסרת התמונה הקיימת</label>
+    {% endif %}
+    <label>הוספה או החלפת תמונה <span>(JPG, PNG או WebP, עד 8MB)</span><input type="file" name="product_image" accept="image/jpeg,image/png,image/webp"></label>
+    <div class="notice">שינוי מספר המעקב יאפס את מצב המעקב והאירועים הישנים, כדי שלא יוצגו נתונים של מספר אחר.</div>
+    <div class="actions"><button type="submit">שמירת שינויים</button><a class="button secondary" href="{{ url_for('shipment_detail', shipment_id=shipment.id) }}">ביטול</a></div>
+  </form>
+</section>
+{% endblock %}
