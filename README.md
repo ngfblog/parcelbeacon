@@ -4,7 +4,8 @@ ParcelBeacon is a lightweight, single-user shipment dashboard designed for Unrai
 
 ## Features
 
-- Responsive web dashboard
+- Responsive Hebrew dashboard with compact horizontal shipment cards
+- Sorting by nearest or farthest estimated delivery date
 - Automatic carrier detection
 - Automatic background polling
 - Shipment event history
@@ -81,6 +82,7 @@ Persistent data is stored in `/mnt/cache/appdata/parcelbeacon`.
 | `APP_USERNAME` | No | `admin` | Web login username |
 | `APP_PASSWORD` | Recommended | Empty | Enables login protection when set |
 | `SHIP24_API_KEY` | For updates | Empty | Ship24 Tracking API key |
+| `DESTINATION_COUNTRY_CODE` | No | `IL` | Destination country hint used to improve courier detection |
 | `POLL_INTERVAL_MINUTES` | No | `60` | Poll interval; minimum is 15 minutes |
 | `GOTIFY_URL` | No | Empty | Gotify base URL |
 | `GOTIFY_TOKEN` | No | Empty | Gotify application token |

@@ -263,13 +263,33 @@ class Ship24Client:
         body = {"trackingNumber": tracking_number}
         if carrier_code:
             body["courierCode"] = [carrier_code]
+        destination_country = os.getenv("DESTINATION_COUNTRY_CODE", "IL").strip().upper()
+        if destination_country:
+            body["destinationCountryCode"] = destination_country
         data = self._request("POST", "/trackers", json=body)
         return data.get("tracker", {})
 
-    def get_tracking(self, tracking_number):
-        data = self._request("GET", f"/trackers/search/{tracking_number}/results")
-        trackings = data.get("trackings", [])
-        return trackings[0] if trackings else None
+    def get_tracking(self, tracking_number, tracker_id=""):
+        paths = [f"/trackers/{tracker_id}/results"] if tracker_id else []
+        paths.append(f"/trackers/search/{tracking_number}/results")
+        for path in paths:
+            try:
+                data = self._request("GET", path)
+            except requests.HTTPError:
+                if path == paths[-1]:
+                    raise
+                continue
+            trackings = data.get("trackings", [])
+            if trackings:
+                return trackings[0]
+        return None
+
+    def update_courier(self, tracker_id, carrier_code):
+        return self._request(
+            "PATCH",
+            f"/trackers/{tracker_id}",
+            json={"courierCode": [carrier_code]},
+        )
 
 
 provider = Ship24Client()
@@ -319,15 +339,17 @@ def refresh_shipment(shipment_id, notify=True):
         if not shipment:
             return
         carrier = shipment["carrier_code"] or ""
-        if shipment["provider_name"] != "ship24":
+        tracker_id = shipment["provider_tracker_id"] or ""
+        if shipment["provider_name"] != "ship24" or not tracker_id:
             tracker = provider.register(shipment["tracking_number"], carrier)
+            tracker_id = tracker.get("trackerId", "")
             db.execute(
                 """UPDATE shipments SET provider_name='ship24', provider_tracker_id=?,
                    provider_registered=1, updated_at=? WHERE id=?""",
-                (tracker.get("trackerId", ""), utc_now(), shipment_id),
+                (tracker_id, utc_now(), shipment_id),
             )
             db.commit()
-        raw = provider.get_tracking(shipment["tracking_number"])
+        raw = provider.get_tracking(shipment["tracking_number"], tracker_id)
         if not raw:
             db.execute(
                 "UPDATE shipments SET provider_name='ship24', provider_registered=1, last_checked=?, updated_at=? WHERE id=?",
@@ -450,8 +472,16 @@ def account_settings():
 @login_required
 def index():
     archived = request.args.get("archived", "0") == "1"
+    sort = request.args.get("sort", "updated")
+    order_by = {
+        "updated": "updated_at DESC",
+        "eta_asc": "CASE WHEN estimated_delivery IS NULL OR estimated_delivery = '' THEN 1 ELSE 0 END, estimated_delivery ASC, updated_at DESC",
+        "eta_desc": "CASE WHEN estimated_delivery IS NULL OR estimated_delivery = '' THEN 1 ELSE 0 END, estimated_delivery DESC, updated_at DESC",
+    }.get(sort, "updated_at DESC")
+    if sort not in {"updated", "eta_asc", "eta_desc"}:
+        sort = "updated"
     shipments = get_db().execute(
-        "SELECT * FROM shipments WHERE archived = ? ORDER BY updated_at DESC", (int(archived),)
+        f"SELECT * FROM shipments WHERE archived = ? ORDER BY {order_by}", (int(archived),)
     ).fetchall()
     saved_sources = [
         row["source"]
@@ -466,6 +496,7 @@ def index():
         archived=archived,
         provider_enabled=provider.enabled,
         sources=sources,
+        sort=sort,
     )
 
 
@@ -547,6 +578,7 @@ def edit_shipment(shipment_id):
             if duplicate:
                 flash("מספר המעקב כבר קיים במערכת.", "error")
             else:
+                carrier_changed = bool(carrier_code and carrier_code != (shipment["carrier_code"] or ""))
                 image_filename = shipment["image_filename"]
                 try:
                     uploaded_filename = save_product_image(request.files.get("product_image"), shipment_id)
@@ -574,6 +606,11 @@ def edit_shipment(shipment_id):
                         )
                     db.commit()
                     flash("פרטי המשלוח עודכנו בהצלחה.", "success")
+                    if carrier_changed and shipment["provider_tracker_id"] and provider.enabled:
+                        try:
+                            provider.update_courier(shipment["provider_tracker_id"], carrier_code)
+                        except Exception as exc:
+                            flash(f"הפרטים נשמרו, אך עדכון חברת השילוח ב־Ship24 נכשל: {exc}", "error")
                     if tracking_changed and provider.enabled:
                         try:
                             refresh_shipment(shipment_id, notify=False)

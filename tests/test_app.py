@@ -238,3 +238,40 @@ def test_ship24_tracking_response_is_normalized(tmp_path, monkeypatch):
     assert result["latest_location"] == "Haifa"
     assert result["carrier_code"] == "israel-post"
     assert result["estimated_delivery"] == "2026-09-22"
+
+
+def test_shipments_can_be_sorted_by_nearest_delivery(tmp_path, monkeypatch):
+    app = load_app(tmp_path, monkeypatch)
+    import app as app_module
+
+    with app.test_client() as client:
+        login(client)
+        client.post("/shipments", data={"name": "Later", "tracking_number": "LATER123"})
+        client.post("/shipments", data={"name": "Sooner", "tracking_number": "SOONER123"})
+        client.post("/shipments", data={"name": "Unknown", "tracking_number": "UNKNOWN123"})
+        with app.app_context():
+            db = app_module.get_db()
+            db.execute("UPDATE shipments SET estimated_delivery='2026-09-25' WHERE tracking_number='LATER123'")
+            db.execute("UPDATE shipments SET estimated_delivery='2026-09-22' WHERE tracking_number='SOONER123'")
+            db.commit()
+        response = client.get("/?sort=eta_asc")
+        page = response.data.decode()
+        assert page.index("Sooner") < page.index("Later") < page.index("Unknown")
+        assert 'class="shipment shipment-compact"' in page
+
+
+def test_ship24_prefers_tracker_id_results(tmp_path, monkeypatch):
+    load_app(tmp_path, monkeypatch)
+    import app as app_module
+
+    client = app_module.Ship24Client()
+    calls = []
+
+    def fake_request(method, path, **kwargs):
+        calls.append((method, path))
+        return {"trackings": [{"shipment": {"statusMilestone": "in_transit"}}]}
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    result = client.get_tracking("TRACK123", "tracker-123")
+    assert calls == [("GET", "/trackers/tracker-123/results")]
+    assert result["shipment"]["statusMilestone"] == "in_transit"

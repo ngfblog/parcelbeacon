@@ -2,7 +2,7 @@
 {% block content %}
 <div class="hero">
   <div><h1>המשלוחים שלי</h1><p>כל החבילות במקום אחד.</p></div>
-  <div class="tabs"><a class="{{ '' if archived else 'active' }}" href="/">פעילים</a><a class="{{ 'active' if archived else '' }}" href="/?archived=1">ארכיון</a></div>
+  <div class="tabs"><a class="{{ '' if archived else 'active' }}" href="{{ url_for('index', sort=sort) }}">פעילים</a><a class="{{ 'active' if archived else '' }}" href="{{ url_for('index', archived=1, sort=sort) }}">ארכיון</a></div>
 </div>
 {% if not provider_enabled %}<div class="notice">ספק המעקב אינו מוגדר. ניתן לשמור משלוחים, אך העדכון האוטומטי מושבת.</div>{% endif %}
 {% if not archived %}
@@ -25,22 +25,42 @@
 {% endif %}
 <div class="toolbar">
   <span>{{ shipments|length }} משלוחים</span>
-  {% if not archived %}<form method="post" action="{{ url_for('refresh_all_route') }}"><button class="secondary">רענון הכול</button></form>{% endif %}
+  <div class="toolbar-actions">
+    <form method="get" class="sort-form">
+      {% if archived %}<input type="hidden" name="archived" value="1">{% endif %}
+      <label for="sort">מיון</label>
+      <select id="sort" name="sort">
+        <option value="eta_asc" {{ 'selected' if sort == 'eta_asc' else '' }}>מסירה משוערת — הקרובה ביותר</option>
+        <option value="eta_desc" {{ 'selected' if sort == 'eta_desc' else '' }}>מסירה משוערת — הרחוקה ביותר</option>
+        <option value="updated" {{ 'selected' if sort == 'updated' else '' }}>עודכן לאחרונה</option>
+      </select>
+      <button type="submit" class="secondary">מיין</button>
+    </form>
+    {% if not archived %}<form method="post" action="{{ url_for('refresh_all_route') }}"><button class="secondary">רענון הכול</button></form>{% endif %}
+  </div>
 </div>
 <section class="cards">
 {% for item in shipments %}
-  <article class="shipment">
-    {% if item.image_filename %}<img class="product-image" src="{{ url_for('shipment_image', filename=item.image_filename, v=item.updated_at) }}" alt="תמונת {{ item.name }}" loading="lazy">{% endif %}
-    <div class="shipment-top"><div><span class="status {{ item.status|lower }}">{{ item.status|status_he }}</span><h3><a href="{{ url_for('shipment_detail', shipment_id=item.id) }}">{{ item.name }}</a></h3></div><span class="source">{{ item.source or 'מקור לא צוין' }}</span></div>
-    <code>{{ item.tracking_number }}</code>
-    <p class="courier"><strong>חברת שילוח:</strong> {{ item.carrier_code|courier_name }}</p>
-    <p class="event">{{ (item.latest_event|event_he) if item.latest_event else 'ממתין לעדכון המעקב הראשון.' }}</p>
-    {% if item.latest_location %}<p class="muted">📍 {{ item.latest_location|location_he }}</p>{% endif %}
-    <div class="meta"><span><strong>בדיקה אחרונה:</strong> {{ item.last_checked|datetime_he }}</span>{% if item.estimated_delivery %}<span><strong>מסירה משוערת:</strong> {{ item.estimated_delivery|date_he }}</span>{% endif %}</div>
-    <div class="actions">
+  <article class="shipment shipment-compact">
+    <div class="compact-image">
+      {% if item.image_filename %}<img class="product-image" src="{{ url_for('shipment_image', filename=item.image_filename, v=item.updated_at) }}" alt="תמונת {{ item.name }}" loading="lazy">{% else %}<span aria-hidden="true">📦</span>{% endif %}
+    </div>
+    <div class="compact-main">
+      <div class="compact-title"><h3><a href="{{ url_for('shipment_detail', shipment_id=item.id) }}">{{ item.name }}</a></h3><span class="status {{ item.status|lower }}">{{ item.status|status_he }}</span></div>
+      <p class="source">{{ item.source or 'מקור לא צוין' }} · חברת שילוח: {{ item.carrier_code|courier_name }}</p>
+      <code>{{ item.tracking_number }}</code>
+      <p class="event">{{ (item.latest_event|event_he) if item.latest_event else 'ממתין לעדכון המעקב הראשון.' }}{% if item.latest_location %} · {{ item.latest_location|location_he }}{% endif %}</p>
+      {% if (item.source or '')|lower == 'aliexpress' and item.status == 'pending' %}<p class="tracking-hint">לא נמצא עדכון: ודא שזה מספר המעקב מדף ההזמנה ולא מספר ההזמנה.</p>{% endif %}
+      <span class="last-check">בדיקה אחרונה: {{ item.last_checked|datetime_he }}</span>
+    </div>
+    <div class="compact-delivery">
+      <span>מסירה משוערת</span>
+      <strong>{{ (item.estimated_delivery|date_he) if item.estimated_delivery else 'אין תאריך' }}</strong>
+    </div>
+    <div class="actions compact-actions">
       {% if not archived %}<form method="post" action="{{ url_for('refresh_one', shipment_id=item.id) }}"><button class="secondary">רענון</button></form>{% endif %}
       <a class="button secondary" href="{{ url_for('edit_shipment', shipment_id=item.id) }}">עריכה</a>
-      <form method="post" action="{{ url_for('archive_shipment', shipment_id=item.id) }}"><input type="hidden" name="archived" value="{{ 0 if archived else 1 }}"><button class="secondary">{{ 'שחזור' if archived else 'העברה לארכיון' }}</button></form>
+      <form method="post" action="{{ url_for('archive_shipment', shipment_id=item.id) }}"><input type="hidden" name="archived" value="{{ 0 if archived else 1 }}"><button class="secondary">{{ 'שחזור' if archived else 'ארכיון' }}</button></form>
     </div>
   </article>
 {% else %}<div class="empty">עדיין אין כאן משלוחים.</div>{% endfor %}
