@@ -1,19 +1,19 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="hero">
-  <div><h1>המשלוחים שלי</h1><p>כל החבילות במקום אחד.</p></div>
+  <h1>המשלוחים שלי</h1>
   <div class="tabs"><a class="{{ '' if archived else 'active' }}" href="{{ url_for('index', sort=sort, q=query) }}">פעילים</a><a class="{{ 'active' if archived else '' }}" href="{{ url_for('index', archived=1, sort=sort, q=query) }}">ארכיון</a></div>
 </div>
 {% if not provider_enabled %}<div class="notice">ספק המעקב אינו מוגדר. ניתן לשמור משלוחים, אך העדכון האוטומטי מושבת.</div>{% endif %}
 {% if not archived %}
-<section class="panel">
-  <h2>הוספת משלוח</h2>
+<details class="panel add-panel">
+  <summary>＋ הוספת משלוח</summary>
   <form method="post" action="{{ url_for('add_shipment') }}" class="add-grid" enctype="multipart/form-data">
-    <label>שם החבילה <span>(אופציונלי — ייווצר אוטומטית)</span><input name="name" placeholder="לדוגמה: מתג רשת"></label>
+    <label>שם החבילה <span>(אופציונלי)</span><input name="name" placeholder="לדוגמה: מתג רשת"></label>
     <label>מספר מעקב<input name="tracking_number" placeholder="הזן מספר מעקב" required></label>
     <label>קוד חברת שילוח <span>(אופציונלי)</span><input name="carrier_code" placeholder="זיהוי אוטומטי"></label>
     <label>חנות או מקור <span>(אופציונלי)</span>
-      <input name="source" list="source-options" placeholder="בחר מהרשימה או הקלד מקור אחר" autocomplete="off">
+      <input name="source" list="source-options" placeholder="בחר או הקלד" autocomplete="off">
       <datalist id="source-options">
         {% for source in sources %}<option value="{{ source }}">{% endfor %}
       </datalist>
@@ -21,26 +21,23 @@
     <label>תמונת מוצר <span>(אופציונלי, עד 8MB)</span><input type="file" name="product_image" accept="image/jpeg,image/png,image/webp"></label>
     <button type="submit">הוסף משלוח</button>
   </form>
-</section>
+</details>
 {% endif %}
 <div class="toolbar">
-  <span>{{ shipments|length }} משלוחים{% if query %} נמצאו{% endif %}</span>
+  <span class="shipment-count">{{ shipments|length }} משלוחים{% if query %} נמצאו{% endif %}</span>
   <div class="toolbar-actions">
     <form method="get" class="filter-form">
       {% if archived %}<input type="hidden" name="archived" value="1">{% endif %}
-      <label class="search-field" for="shipment-search">חיפוש
-        <input id="shipment-search" type="search" name="q" value="{{ query }}" placeholder="שם, מספר מעקב, חנות או מצב">
-      </label>
-      <label for="sort">מיון</label>
-      <select id="sort" name="sort">
+      <input id="shipment-search" class="toolbar-search" type="search" name="q" value="{{ query }}" placeholder="חיפוש לפי שם, מספר מעקב, חנות או מצב" aria-label="חיפוש משלוחים">
+      <select id="sort" name="sort" aria-label="מיון משלוחים">
         <option value="eta_asc" {{ 'selected' if sort == 'eta_asc' else '' }}>מסירה משוערת — הקרובה ביותר</option>
         <option value="eta_desc" {{ 'selected' if sort == 'eta_desc' else '' }}>מסירה משוערת — הרחוקה ביותר</option>
         <option value="updated" {{ 'selected' if sort == 'updated' else '' }}>עודכן לאחרונה</option>
       </select>
-      <button type="submit" class="secondary">חפש ומיין</button>
-      {% if query %}<a class="button secondary clear-filter" href="{{ url_for('index', archived=1 if archived else None, sort=sort) }}">נקה</a>{% endif %}
+      <button type="submit" class="secondary toolbar-button">חיפוש</button>
+      {% if query %}<a class="button secondary toolbar-button clear-filter" href="{{ url_for('index', archived=1 if archived else None, sort=sort) }}">נקה</a>{% endif %}
     </form>
-    {% if not archived %}<form method="post" action="{{ url_for('refresh_all_route') }}"><button class="secondary">רענון הכול</button></form>{% endif %}
+    {% if not archived %}<form method="post" action="{{ url_for('refresh_all_route') }}"><button class="secondary toolbar-button">רענון הכול</button></form>{% endif %}
   </div>
 </div>
 <section class="cards">

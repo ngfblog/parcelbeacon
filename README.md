@@ -5,6 +5,7 @@ ParcelBeacon is a lightweight, single-user shipment dashboard designed for Unrai
 ## Features
 
 - Responsive Hebrew dashboard with compact horizontal shipment cards
+- Compact single-line page heading and collapsible add-shipment form
 - Sorting by nearest or farthest estimated delivery date
 - Nearest estimated delivery is the default sort order
 - Search by shipment name, tracking number, store, courier, provider, status, or event

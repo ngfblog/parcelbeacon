@@ -17,3 +17,8 @@ document.querySelectorAll("form[data-confirm]").forEach((form) => {
     if (!window.confirm(form.dataset.confirm)) event.preventDefault();
   });
 });
+
+const sortSelect = document.getElementById("sort");
+if (sortSelect) {
+  sortSelect.addEventListener("change", () => sortSelect.form.submit());
+}
