@@ -19,3 +19,7 @@ header{height:54px;padding:0 max(16px,calc((100% - 1180px)/2))}.brand{font-size:
 @media(max-width:1050px){.add-panel .add-grid{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:700px){header{height:auto;min-height:54px;padding:8px 14px;gap:10px}.header-actions{flex-wrap:wrap;gap:8px;font-size:13px}main{padding:14px 12px 36px}.hero{align-items:center;flex-direction:row}.hero h1{font-size:22px}.add-panel .add-grid{grid-template-columns:1fr 1fr}.add-panel .add-grid button{grid-column:1/-1}}
 @media(max-width:480px){.hero{align-items:stretch;flex-direction:column}.add-panel .add-grid{grid-template-columns:1fr}}
+
+/* Keep tracking details legible without expanding the compact shipment rows. */
+.compact-main .event{font-size:14px;line-height:1.55;white-space:normal;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2}
+.compact-main .status-text{font-size:16px;line-height:1.4;font-weight:800}

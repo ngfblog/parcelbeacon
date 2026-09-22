@@ -22,6 +22,7 @@
       <label class="checkbox-label"><input type="checkbox" name="remove_image" value="1"> הסרת התמונה הקיימת</label>
     {% endif %}
     <label>הוספה או החלפת תמונה <span>(JPG, PNG או WebP, עד 8MB)</span><input type="file" name="product_image" accept="image/jpeg,image/png,image/webp"></label>
+    <label>קישור לדף המוצר <span>(אופציונלי; אפשר למחוק כדי להסיר)</span><input type="url" name="product_url" maxlength="2048" dir="ltr" value="{{ shipment.product_url or '' }}" placeholder="https://..."></label>
     <div class="notice">שינוי מספר המעקב יאפס את מצב המעקב והאירועים הישנים, כדי שלא יוצגו נתונים של מספר אחר.</div>
     <div class="actions"><button type="submit">שמירת שינויים</button><a class="button secondary" href="{{ url_for('shipment_detail', shipment_id=shipment.id) }}">ביטול</a></div>
   </form>

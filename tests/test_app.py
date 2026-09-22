@@ -1,4 +1,5 @@
 import importlib
+import sqlite3
 from io import BytesIO
 
 from PIL import Image
@@ -47,6 +48,34 @@ def test_shipment_lifecycle(tmp_path, monkeypatch):
         assert b"Test Parcel" in client.get("/?archived=1").data
         client.post("/shipments/1/delete")
         assert b"Test Parcel" not in client.get("/?archived=1").data
+
+
+def test_product_url_create_edit_remove_and_validation(tmp_path, monkeypatch):
+    app = load_app(tmp_path, monkeypatch)
+    with app.test_client() as client:
+        login(client)
+        client.post("/shipments", data={"tracking_number": "URL123", "product_url": "https://shop.example/item?id=1"})
+        assert b'https://shop.example/item?id=1' in client.get("/").data
+        assert b'https://shop.example/item?id=1' in client.get("/shipments/1").data
+        client.post("/shipments/1/edit", data={"tracking_number": "URL123", "product_url": "javascript:alert(1)"})
+        assert b'https://shop.example/item?id=1' in client.get("/shipments/1").data
+        client.post("/shipments/1/edit", data={"tracking_number": "URL123", "product_url": "https://new.example/product"})
+        assert b'https://new.example/product' in client.get("/shipments/1").data
+        client.post("/shipments/1/edit", data={"tracking_number": "URL123", "product_url": ""})
+        assert b'https://new.example/product' not in client.get("/shipments/1").data
+
+
+def test_product_url_migration_keeps_existing_shipments(tmp_path, monkeypatch):
+    db_path = tmp_path / "parcelbeacon.db"
+    with sqlite3.connect(db_path) as db:
+        db.execute("CREATE TABLE shipments (id INTEGER PRIMARY KEY, name TEXT, tracking_number TEXT, source TEXT, carrier_code TEXT, status TEXT, substatus TEXT, latest_event TEXT, latest_location TEXT, estimated_delivery TEXT, archived INTEGER, provider_registered INTEGER, last_checked TEXT, created_at TEXT, updated_at TEXT)")
+        db.execute("INSERT INTO shipments (id, name, tracking_number, status, archived, created_at, updated_at) VALUES (1, 'Existing', 'OLD1', 'pending', 0, '2026-01-01', '2026-01-01')")
+    app = load_app(tmp_path, monkeypatch)
+    with app.test_client() as client:
+        login(client)
+        assert b"Existing" in client.get("/").data
+        client.post("/shipments/1/edit", data={"tracking_number": "OLD1", "name": "Existing", "product_url": "https://shop.example/old"})
+        assert b'https://shop.example/old' in client.get("/shipments/1").data
 
 
 def test_source_field_has_common_and_saved_autocomplete_options(tmp_path, monkeypatch):
@@ -111,6 +140,15 @@ def test_tracking_text_and_dates_are_localised(tmp_path, monkeypatch):
     app = load_app(tmp_path, monkeypatch)
     with app.test_request_context():
         assert app.jinja_env.filters["event_he"]("Departed from Facility") == "יצא ממתקן המיון"
+        assert app.jinja_env.filters["event_he"]("On the way, A trusted third-party vendor is on the way with your package · BEN GURION AIRPORT") == "החבילה בדרך עם חברת שילוח חיצונית"
+        assert app.jinja_env.filters["event_he"]("Notification has been received regarding a parcel being shipped") == "התקבלה הודעה על משלוח החבילה"
+        assert app.jinja_env.filters["event_he"]("Arrived at customs,Arrived at customs") == "המשלוח הגיע למכס"
+        assert app.jinja_env.filters["event_he"]("Arrived at linehaul office,Arrived at linehaul office") == "הגיע למרכז ההעברה הבין־לאומי"
+        assert app.jinja_env.filters["event_he"]("Departed from departure country/region,Left from departure country/region") == "יצא ממדינת המוצא"
+        assert app.jinja_env.filters["event_he"]("Xiaoshan District,Departed from sorting center,Outbound in sorting center") == "יצא ממרכז המיון"
+        assert app.jinja_env.filters["event_he"]("At local FedEx facility") == "במתקן המקומי של FedEx"
+        assert app.jinja_env.filters["event_he"]("International shipment release - Import") == "המשלוח הבין־לאומי שוחרר ביבוא"
+        assert app.jinja_env.filters["event_he"]("On the way, Package available for clearance") == "החבילה זמינה לשחרור מהמכס"
         assert app.jinja_env.filters["location_he"]("Lod, Israel") == "לוד, ישראל"
         assert app.jinja_env.filters["datetime_he"]("2026-09-21T07:12:41+00:00") == "21/09/2026 10:12"
         assert app.jinja_env.filters["date_he"]("2026-09-22T00:00:00.000Z") == "22/09/2026"

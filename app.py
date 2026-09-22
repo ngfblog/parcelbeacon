@@ -4,6 +4,7 @@ import threading
 import time
 import hmac
 from pathlib import Path
+from urllib.parse import urlsplit
 from datetime import datetime, timezone
 from functools import wraps
 from zoneinfo import ZoneInfo
@@ -42,6 +43,33 @@ EVENT_TRANSLATIONS = {
     "arrived at destination country": "המשלוח הגיע למדינת היעד",
     "handed over to last mile carrier": "המשלוח הועבר לחברת המסירה המקומית",
     "delivery attempt failed": "ניסיון המסירה נכשל",
+    "on the way, a trusted third-party vendor is on the way with your package": "החבילה בדרך עם חברת שילוח חיצונית",
+    "a trusted third-party vendor is on the way with your package": "החבילה בדרך עם חברת שילוח חיצונית",
+    "notification has been received regarding a parcel being shipped": "התקבלה הודעה על משלוח החבילה",
+    "package is on the way": "החבילה בדרך",
+    "on the way": "החבילה בדרך",
+    "shipment information sent to fedex": "פרטי המשלוח הועברו ל־FedEx",
+    "label created": "נוצרה תווית משלוח",
+    "arrived at sorting center": "הגיע למרכז המיון",
+    "departed from sorting center": "יצא ממרכז המיון",
+    "in delivery": "במסירה",
+    "arrived at linehaul office": "הגיע למרכז ההעברה הבין־לאומי",
+    "departed from departure country/region": "יצא ממדינת המוצא",
+    "left from departure country/region": "יצא ממדינת המוצא",
+    "leaving from departure country/region": "בדרכו אל מחוץ למדינת המוצא",
+    "arrived at departure transport hub": "הגיע למרכז ההובלה במדינת המוצא",
+    "last-mile delivery forecast": "תחזית למסירה על ידי חברת השילוח המקומית",
+    "processing at sorting center": "בטיפול במרכז המיון",
+    "inbound in sorting center": "נכנס למרכז המיון",
+    "outbound in sorting center": "יצא ממרכז המיון",
+    "at local fedex facility": "במתקן המקומי של FedEx",
+    "international shipment release - import": "המשלוח הבין־לאומי שוחרר ביבוא",
+    "package available for clearance": "החבילה זמינה לשחרור מהמכס",
+    "at destination sort facility": "במרכז המיון במדינת היעד",
+    "departed fedex hub": "יצא ממרכז FedEx",
+    "arrived at fedex hub": "הגיע למרכז FedEx",
+    "left fedex origin facility": "יצא ממתקן המוצא של FedEx",
+    "picked up": "נאסף על ידי חברת השילוח",
 }
 LOCATION_TRANSLATIONS = {"lod": "לוד", "israel": "ישראל"}
 COURIER_NAMES = {
@@ -62,10 +90,20 @@ def status_he(value):
 def event_he(value):
     if not value:
         return ""
-    normalized = value.strip().lower()
+    normalized = " ".join(value.strip().lower().split())
+    # Some providers repeat the same description twice, separated by a comma.
+    parts = [part.strip() for part in normalized.split(",")]
+    if len(parts) == 2 and parts[0] == parts[1]:
+        normalized = parts[0]
+    # Tracking feeds sometimes combine a place and several synonymous events.
+    # Use the last known action after stripping an initial place name.
+    elif len(parts) > 1:
+        actions = [(len(phrase), part) for part in parts for phrase in EVENT_TRANSLATIONS if phrase in part]
+        if actions:
+            normalized = max(actions, key=lambda match: match[0])[1]
     if normalized in EVENT_TRANSLATIONS:
         return EVENT_TRANSLATIONS[normalized]
-    for english, hebrew in EVENT_TRANSLATIONS.items():
+    for english, hebrew in sorted(EVENT_TRANSLATIONS.items(), key=lambda entry: len(entry[0]), reverse=True):
         if english in normalized:
             return hebrew
     return value
@@ -170,6 +208,7 @@ def init_db():
                 tracking_number TEXT NOT NULL UNIQUE,
                 carrier_code TEXT,
                 source TEXT,
+                product_url TEXT,
                 status TEXT NOT NULL DEFAULT 'pending',
                 substatus TEXT,
                 latest_event TEXT,
@@ -201,6 +240,8 @@ def init_db():
             """
         )
         columns = {row[1] for row in db.execute("PRAGMA table_info(shipments)")}
+        if "product_url" not in columns:
+            db.execute("ALTER TABLE shipments ADD COLUMN product_url TEXT")
         if "provider_name" not in columns:
             db.execute("ALTER TABLE shipments ADD COLUMN provider_name TEXT")
         if "provider_tracker_id" not in columns:
@@ -676,12 +717,31 @@ def index():
     )
 
 
+def validate_product_url(value):
+    value = value.strip()
+    if not value:
+        return None
+    try:
+        parts = urlsplit(value)
+        valid = parts.scheme.lower() in ("http", "https") and bool(parts.hostname) and not (parts.username or parts.password)
+    except ValueError:
+        valid = False
+    if len(value) > 2048 or any(ord(char) < 32 or ord(char) == 127 for char in value) or not valid:
+        raise ValueError("יש להזין קישור תקין לדף המוצר שמתחיל ב־https:// או http://.")
+    return value
+
+
 @app.post("/shipments")
 @login_required
 def add_shipment():
     name = request.form.get("name", "").strip()
     tracking_number = request.form.get("tracking_number", "").strip()
     source = request.form.get("source", "").strip()
+    try:
+        product_url = validate_product_url(request.form.get("product_url", ""))
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("index"))
     if not tracking_number:
         flash("יש להזין מספר מעקב.", "error")
         return redirect(url_for("index"))
@@ -690,8 +750,8 @@ def add_shipment():
     now = utc_now()
     try:
         cursor = get_db().execute(
-            "INSERT INTO shipments (name,tracking_number,carrier_code,source,created_at,updated_at) VALUES (?,?,?,?,?,?)",
-            (name, tracking_number, request.form.get("carrier_code", "").strip(), source, now, now),
+            "INSERT INTO shipments (name,tracking_number,carrier_code,source,product_url,created_at,updated_at) VALUES (?,?,?,?,?,?,?)",
+            (name, tracking_number, request.form.get("carrier_code", "").strip(), source, product_url, now, now),
         )
         get_db().commit()
     except sqlite3.IntegrityError:
@@ -741,6 +801,11 @@ def edit_shipment(shipment_id):
         tracking_number = request.form.get("tracking_number", "").strip()
         carrier_code = request.form.get("carrier_code", "").strip()
         source = request.form.get("source", "").strip()
+        try:
+            product_url = validate_product_url(request.form.get("product_url", ""))
+        except ValueError as exc:
+            flash(str(exc), "error")
+            return redirect(url_for("edit_shipment", shipment_id=shipment_id))
         if not tracking_number:
             flash("יש להזין מספר מעקב.", "error")
         else:
@@ -769,17 +834,17 @@ def edit_shipment(shipment_id):
                     if tracking_changed:
                         db.execute("DELETE FROM events WHERE shipment_id = ?", (shipment_id,))
                         db.execute(
-                            """UPDATE shipments SET name=?, tracking_number=?, carrier_code=?, source=?,
+                            """UPDATE shipments SET name=?, tracking_number=?, carrier_code=?, source=?, product_url=?,
                                status='pending', substatus=NULL, latest_event=NULL, latest_location=NULL,
                                estimated_delivery=NULL, provider_registered=0, provider_name=NULL,
                                provider_tracker_id=NULL, track123_registered=0, ship24_tracker_id=NULL,
                                last_checked=NULL, image_filename=?, updated_at=? WHERE id=?""",
-                            (name, tracking_number, carrier_code, source, image_filename, utc_now(), shipment_id),
+                            (name, tracking_number, carrier_code, source, product_url, image_filename, utc_now(), shipment_id),
                         )
                     else:
                         db.execute(
-                            "UPDATE shipments SET name=?, carrier_code=?, source=?, image_filename=?, updated_at=? WHERE id=?",
-                            (name, carrier_code, source, image_filename, utc_now(), shipment_id),
+                            "UPDATE shipments SET name=?, carrier_code=?, source=?, product_url=?, image_filename=?, updated_at=? WHERE id=?",
+                            (name, carrier_code, source, product_url, image_filename, utc_now(), shipment_id),
                         )
                     db.commit()
                     flash("פרטי המשלוח עודכנו בהצלחה.", "success")
