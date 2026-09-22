@@ -3,7 +3,7 @@ services:
     container_name: parcelbeacon
     build:
       context: .
-    image: parcelbeacon:1.6.0
+    image: parcelbeacon:local
     restart: unless-stopped
     ports:
       - "8090:8090"
@@ -14,7 +14,6 @@ services:
       APP_USERNAME: ${APP_USERNAME:-admin}
       APP_PASSWORD: ${APP_PASSWORD}
       TRACK123_API_KEY: ${TRACK123_API_KEY:-}
-      SHIP24_API_KEY: ${SHIP24_API_KEY:-}
       DESTINATION_COUNTRY_CODE: ${DESTINATION_COUNTRY_CODE:-IL}
       POLL_INTERVAL_MINUTES: ${POLL_INTERVAL_MINUTES:-60}
       GOTIFY_URL: ${GOTIFY_URL:-}

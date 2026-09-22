@@ -8,7 +8,8 @@
   <form method="post" class="stack" enctype="multipart/form-data">
     <label>שם החבילה <span>(אופציונלי — ייווצר אוטומטית)</span><input name="name" value="{{ shipment.name }}"></label>
     <label>מספר מעקב<input name="tracking_number" value="{{ shipment.tracking_number }}" required></label>
-    <label>קוד חברת שילוח <span>(אופציונלי)</span><input name="carrier_code" value="{{ shipment.carrier_code or '' }}" placeholder="זיהוי אוטומטי"></label>
+    <label>חברת שילוח ידנית <span>(אופציונלי; השאר ריק לזיהוי אוטומטי)</span><input name="carrier_code" value="{{ shipment.carrier_override or '' }}" list="carrier-options" placeholder="למשל royal-mail או aramex"></label>
+    <datalist id="carrier-options"><option value="royal-mail">Royal Mail</option><option value="aramex">Aramex</option><option value="ups">UPS</option><option value="cainiao">Cainiao</option><option value="israel-post">Israel Post</option></datalist>
     <label>חנות או מקור <span>(אופציונלי)</span>
       <select class="source-picker" data-source-target="edit-source">
         <option value="">בחר מקור מהרשימה</option>

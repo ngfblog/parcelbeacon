@@ -1,6 +1,6 @@
 # ParcelBeacon
 
-ParcelBeacon is a lightweight, single-user shipment dashboard designed for Unraid. It stores shipment metadata and event history locally in SQLite, uses Track123 as the primary tracking provider with an optional Ship24 fallback, and sends status-change notifications through Gotify.
+ParcelBeacon is a lightweight, single-user shipment dashboard designed for Unraid. It stores shipment metadata and event history locally in SQLite, uses Track123 for tracking, and sends status-change notifications through Gotify.
 
 ## Features
 
@@ -10,15 +10,16 @@ ParcelBeacon is a lightweight, single-user shipment dashboard designed for Unrai
 - Nearest estimated delivery is the default sort order
 - Search by shipment name, tracking number, store, courier, provider, status, or event
 - Automatic carrier detection
-- Track123 primary provider with automatic Ship24 fallback
+- Track123 tracking provider
 - Tracking provider shown for every shipment
 - Automatic background polling
 - Shipment event history
 - Shipment editing, including tracking number corrections
 - Source selection with a replaceable preset list and custom text entry
-- Direct link to the Ship24 shipment dashboard
 - Optional local product images with metadata removal and resizing
-- Hebrew tracking descriptions and Israel-local date formatting
+- Optional product-page URL on each shipment, editable later and linked from its card and detail page
+- Hebrew labels and translations for common Track123, Cainiao, and FedEx tracking events, including repeated provider messages
+- Larger status text on compact cards and Israel-local date formatting
 - Clear detected courier display
 - Archive and restore workflow
 - Permanent shipment deletion with browser confirmation
@@ -32,7 +33,6 @@ ParcelBeacon is a lightweight, single-user shipment dashboard designed for Unrai
 
 - Unraid with Docker Compose or Portainer
 - A Track123 API key for automatic tracking
-- Optional Ship24 API key for fallback tracking
 - Optional Gotify server and application token
 
 ## Recommended installation on Unraid
@@ -49,12 +49,13 @@ ParcelBeacon is a lightweight, single-user shipment dashboard designed for Unrai
 3. Open **Docker > Add Container**.
 4. Select **ParcelBeacon** from the **Template** list.
 5. Generate a session key with `openssl rand -hex 32` and paste it into **Secret Key**.
-6. Enter a username, a strong password, a Track123 API key, and optional Ship24 and Gotify credentials.
+6. Enter a username, a strong password, a Track123 API key, and optional Gotify credentials.
 7. Keep **Network Type** set to **Bridge**, then click **Apply**.
 8. Open `http://UNRAID-IP:8090`.
 
 The installer pulls `ghcr.io/ngfblog/parcelbeacon:latest` and installs the Unraid XML template.
 The persistent appdata directory is assigned to Unraid's standard `nobody:users` ownership (`99:100`).
+The installer uses the image currently published to GHCR; extracting new project files alone does not update that image.
 
 ## Docker Compose installation
 
@@ -72,7 +73,7 @@ The persistent appdata directory is assigned to Unraid's standard `nobody:users`
    openssl rand -hex 32
    ```
 
-5. Edit `.env` and set `SECRET_KEY`, `APP_PASSWORD`, `TRACK123_API_KEY`, and any optional Ship24 or Gotify credentials.
+5. Edit `.env` and set `SECRET_KEY`, `APP_PASSWORD`, `TRACK123_API_KEY`, and optional Gotify credentials.
 6. Build and start the container:
 
    ```bash
@@ -83,6 +84,15 @@ The persistent appdata directory is assigned to Unraid's standard `nobody:users`
 
 Persistent data is stored in `/mnt/cache/appdata/parcelbeacon`.
 
+## Adding and editing shipments
+
+1. Open **Add shipment** and enter a tracking number. A name, carrier code, store/source, product image, and product-page URL are optional.
+2. For a product page, paste its full `https://` or `http://` URL into **Product page URL**. The dashboard and shipment details will show a link that opens it in a new tab.
+3. Open **Edit** on an existing shipment to correct any of these values. Clear the product-page URL field and save to remove the link.
+4. Use **Refresh** for one shipment or **Refresh all** to request new provider data. Automatic polling uses `POLL_INTERVAL_MINUTES` and runs while the container is running.
+
+Product images are stored locally in the persistent `uploads` directory. The product-page URL is stored as text; ParcelBeacon does not fetch the product page or extract a product name or image from it. If a shipment name is left empty, ParcelBeacon generates a local name from the source or tracking number.
+
 ## Configuration
 
 | Variable | Required | Default | Description |
@@ -91,7 +101,6 @@ Persistent data is stored in `/mnt/cache/appdata/parcelbeacon`.
 | `APP_USERNAME` | No | `admin` | Web login username |
 | `APP_PASSWORD` | Recommended | Empty | Enables login protection when set |
 | `TRACK123_API_KEY` | For updates | Empty | Primary Track123 Tracking API key |
-| `SHIP24_API_KEY` | No | Empty | Optional Ship24 fallback API key |
 | `DESTINATION_COUNTRY_CODE` | No | `IL` | Destination country hint used to improve courier detection |
 | `POLL_INTERVAL_MINUTES` | No | `60` | Poll interval; minimum is 15 minutes |
 | `GOTIFY_URL` | No | Empty | Gotify base URL |
@@ -107,13 +116,24 @@ the container environment variables.
 
 Back up `/mnt/cache/appdata/parcelbeacon`. It contains the SQLite database and the optional `uploads` directory with product images. For a consistent live backup, use SQLite's backup command or stop the container before copying the directory.
 
-## Update
+## Updating
+
+### Unraid template using GHCR
+
+The Unraid template points to `ghcr.io/ngfblog/parcelbeacon:latest`. First publish the updated project through the repository's **Build and Publish Container** workflow and confirm the workflow succeeded. Then use Unraid's **Check for Updates** and **Update** for the ParcelBeacon container. A source ZIP or a new README does not change the running GHCR container until an updated image is published and pulled.
+
+Keep the existing `/data` mapping to `/mnt/cache/appdata/parcelbeacon`. Shipment records, saved login settings, and product images remain in that persistent directory. Database columns needed by newer versions are added automatically at startup.
+
+### Docker Compose built from local project files
+
+Extract the full updated project over your local source directory, keeping the persistent appdata directory separate. From the project directory, rebuild and restart:
 
 ```bash
 cd /mnt/user/appdata/parcelbeacon-project
-docker compose down
 docker compose up -d --build
 ```
+
+Confirm the container started with `docker compose ps` and review its logs with `docker compose logs --tail=100 parcelbeacon`. Reload the dashboard in the browser. When changing installation methods, check that both methods mount the same host appdata directory to `/data` before starting the replacement container.
 
 ## Security
 
@@ -125,7 +145,7 @@ docker compose up -d --build
 
 ## Provider notes
 
-ParcelBeacon does not scrape carrier websites. Track123 is queried first. Ship24 is queried only when Track123 is unavailable or does not yet provide useful tracking data. Carrier availability, quotas, and pricing are controlled by the providers. The dashboard remains usable without an API key for manually recording and organizing tracking numbers.
+ParcelBeacon does not scrape carrier websites. Track123 is queried for tracking updates and automatically identifies carriers when no carrier code is supplied. A detected carrier is shown even if no tracking events are available yet. To correct an identification, enter its Track123 carrier code (for example, `royal-mail` or `aramex`) in Edit shipment; the selected carrier is sent during registration and subsequent queries. For an existing registered tracking, the app requests a carrier change from Track123 before querying again. A correctly detected carrier does not guarantee that Track123 has access to tracking events. Carrier availability, quotas, and pricing are controlled by the provider. Common tracking event messages are translated for display in Hebrew; messages without a known translation can still appear in their original language. The dashboard remains usable without an API key for manually recording and organizing tracking numbers.
 
 ## License
 

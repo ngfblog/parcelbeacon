@@ -7,6 +7,7 @@
   <span class="status {{ shipment.status|lower }}">{{ shipment.status|status_he }}</span>
   <h1>{{ shipment.name }}</h1><code>{{ shipment.tracking_number }}</code>
   <p class="courier"><strong>חברת שילוח:</strong> {{ shipment.carrier_code|courier_name }}</p>
+  {% if shipment.provider_name == "ship24" %}<p class="tracking-hint">הנתונים של Ship24 הם היסטוריים. אם Track123 עדיין לא החזיר אירועים, אין עדכון חדש לאימות.</p>{% endif %}
   <p class="courier"><strong>מקור מעקב:</strong> {{ shipment.provider_name|provider_name }}</p>
   {% if shipment.product_url %}<p class="courier"><a href="{{ shipment.product_url }}" target="_blank" rel="noopener noreferrer">פתיחת דף המוצר ↗</a></p>{% endif %}
   <p>{{ (shipment.latest_event|event_he) if shipment.latest_event else 'ממתין לעדכון המעקב הראשון.' }}</p>

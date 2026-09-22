@@ -11,7 +11,6 @@
     <a class="brand" href="{{ url_for('index') }}">📦 ParcelBeacon</a>
     <nav class="header-actions">
       <a class="header-link" href="https://www.track123.com/tracking" target="_blank" rel="noopener noreferrer">מעקב Track123 ↗</a>
-      <a class="header-link" href="https://dashboard.ship24.com/shipment-dashboard" target="_blank" rel="noopener noreferrer">לוח Ship24 ↗</a>
       <a class="header-link" href="{{ url_for('account_settings') }}">הגדרות חשבון</a>
       {% if session.get('authenticated') %}
       <form method="post" action="{{ url_for('logout') }}"><button class="link-button">יציאה</button></form>

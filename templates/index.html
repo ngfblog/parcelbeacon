@@ -52,6 +52,7 @@
       <p class="source">{{ item.source or 'מקור לא צוין' }} · חברת שילוח: {{ item.carrier_code|courier_name }} · <strong>מקור מעקב: {{ item.provider_name|provider_name }}</strong>{% if item.product_url %} · <a href="{{ item.product_url }}" target="_blank" rel="noopener noreferrer">דף המוצר ↗</a>{% endif %}</p>
       <code>{{ item.tracking_number }}</code>
       <p class="event" title="{{ (item.latest_event|event_he) if item.latest_event else 'ממתין לעדכון המעקב הראשון.' }}"><span class="status-text {{ item.status|lower }}">מצב: {{ item.status|status_he }}</span> · {{ (item.latest_event|event_he) if item.latest_event else 'ממתין לעדכון המעקב הראשון.' }}{% if item.latest_location %} · {{ item.latest_location|location_he }}{% endif %}</p>
+      {% if item.provider_name == "ship24" %}<p class="tracking-hint">נתוני Ship24 היסטוריים; Track123 טרם סיפק עדכון חלופי.</p>{% endif %}
       {% if (item.source or '')|lower == 'aliexpress' and item.status == 'pending' %}<p class="tracking-hint">לא נמצא עדכון: ודא שזה מספר המעקב מדף ההזמנה ולא מספר ההזמנה.</p>{% endif %}
       <span class="last-check">בדיקה אחרונה: {{ item.last_checked|datetime_he }}</span>
     </div>

@@ -115,13 +115,13 @@ def test_existing_shipment_can_be_edited(tmp_path, monkeypatch):
         assert b"OLD123" not in response.data
 
 
-def test_ship24_dashboard_link_is_available(tmp_path, monkeypatch):
+def test_track123_link_is_available_without_ship24(tmp_path, monkeypatch):
     app = load_app(tmp_path, monkeypatch)
     with app.test_client() as client:
         login(client)
         response = client.get("/")
-        assert b'https://dashboard.ship24.com/shipment-dashboard' in response.data
-        assert b'rel="noopener noreferrer"' in response.data
+        assert b"https://www.track123.com/tracking" in response.data
+        assert b"dashboard.ship24.com" not in response.data
 
 
 def test_name_is_generated_when_left_empty(tmp_path, monkeypatch):
@@ -251,45 +251,6 @@ def test_account_change_requires_current_password(tmp_path, monkeypatch):
         assert "הסיסמה הנוכחית שגויה".encode() in response.data
 
 
-def test_ship24_tracking_response_is_normalized(tmp_path, monkeypatch):
-    load_app(tmp_path, monkeypatch)
-    import app as app_module
-
-    result = app_module.normalize_tracking(
-        {
-            "shipment": {
-                "statusMilestone": "available_for_pickup",
-                "statusCode": "delivery_available_for_pickup",
-                "delivery": {"estimatedDeliveryDate": "2026-09-22"},
-            },
-            "events": [
-                {
-                    "eventId": "event-1",
-                    "order": 1,
-                    "occurrenceDatetime": "2026-09-20T10:00:00+03:00",
-                    "status": "Shipment received",
-                    "location": "Tel Aviv",
-                    "courierCode": "israel-post",
-                },
-                {
-                    "eventId": "event-2",
-                    "order": 2,
-                    "occurrenceDatetime": "2026-09-21T10:00:00+03:00",
-                    "status": "Ready for pickup",
-                    "location": "Haifa",
-                    "courierCode": "israel-post",
-                },
-            ],
-        }
-    )
-
-    assert result["status"] == "available_for_pickup"
-    assert result["latest_event"] == "Ready for pickup"
-    assert result["latest_location"] == "Haifa"
-    assert result["carrier_code"] == "israel-post"
-    assert result["estimated_delivery"] == "2026-09-22"
-
-
 def test_shipments_can_be_sorted_by_nearest_delivery(tmp_path, monkeypatch):
     app = load_app(tmp_path, monkeypatch)
     import app as app_module
@@ -348,23 +309,6 @@ def test_shipments_can_be_searched_and_actions_include_delete(tmp_path, monkeypa
         assert b">\xd7\x9e\xd7\x97\xd7\x99\xd7\xa7\xd7\x94</button>" in response.data
 
 
-def test_ship24_prefers_tracker_id_results(tmp_path, monkeypatch):
-    load_app(tmp_path, monkeypatch)
-    import app as app_module
-
-    client = app_module.Ship24Client()
-    calls = []
-
-    def fake_request(method, path, **kwargs):
-        calls.append((method, path))
-        return {"trackings": [{"shipment": {"statusMilestone": "in_transit"}}]}
-
-    monkeypatch.setattr(client, "_request", fake_request)
-    result = client.get_tracking("TRACK123", "tracker-123")
-    assert calls == [("GET", "/trackers/tracker-123/results")]
-    assert result["shipment"]["statusMilestone"] == "in_transit"
-
-
 def test_track123_query_uses_v21_api(tmp_path, monkeypatch):
     load_app(tmp_path, monkeypatch)
     import app as app_module
@@ -419,24 +363,22 @@ def test_track123_tracking_response_is_normalized(tmp_path, monkeypatch):
     assert result["estimated_delivery"] == "2026-09-25"
 
 
-def test_track123_is_primary_and_ship24_is_not_called_when_useful(tmp_path, monkeypatch):
+def test_track123_is_used_when_tracking_is_available(tmp_path, monkeypatch):
     monkeypatch.setenv("TRACK123_API_KEY", "track123-test-key")
-    monkeypatch.setenv("SHIP24_API_KEY", "ship24-test-key")
     flask_app = load_app(tmp_path, monkeypatch)
     import app as app_module
 
     track123_calls = []
-    ship24_calls = []
 
     monkeypatch.setattr(
         app_module.track123_provider,
         "register",
-        lambda tracking_number: track123_calls.append(("register", tracking_number)) or {},
+        lambda tracking_number, carrier_code="": track123_calls.append(("register", tracking_number, carrier_code)) or {},
     )
     monkeypatch.setattr(
         app_module.track123_provider,
         "get_tracking",
-        lambda tracking_number: track123_calls.append(("query", tracking_number)) or {
+        lambda tracking_number, carrier_code="": track123_calls.append(("query", tracking_number, carrier_code)) or {
             "transitStatus": "IN_TRANSIT",
             "localLogisticsInfo": {
                 "courierCode": "cainiao",
@@ -450,12 +392,6 @@ def test_track123_is_primary_and_ship24_is_not_called_when_useful(tmp_path, monk
             },
         },
     )
-    monkeypatch.setattr(
-        app_module.ship24_provider,
-        "get_tracking",
-        lambda *args, **kwargs: ship24_calls.append(args),
-    )
-
     with flask_app.app_context():
         db = app_module.get_db()
         now = app_module.utc_now()
@@ -467,7 +403,92 @@ def test_track123_is_primary_and_ship24_is_not_called_when_useful(tmp_path, monk
         app_module.refresh_shipment(cursor.lastrowid, notify=False)
         shipment = db.execute("SELECT * FROM shipments WHERE id=?", (cursor.lastrowid,)).fetchone()
 
-    assert track123_calls == [("register", "DSVPH005472484"), ("query", "DSVPH005472484")]
-    assert ship24_calls == []
+    assert track123_calls == [("register", "DSVPH005472484", ""), ("query", "DSVPH005472484", "")]
     assert shipment["provider_name"] == "track123"
     assert shipment["carrier_code"] == "cainiao"
+
+
+def test_ship24_key_is_ignored_and_existing_history_survives(tmp_path, monkeypatch):
+    monkeypatch.delenv("TRACK123_API_KEY", raising=False)
+    monkeypatch.setenv("SHIP24_API_KEY", "legacy-key")
+    flask_app = load_app(tmp_path, monkeypatch)
+    import app as app_module
+
+    with flask_app.app_context():
+        db = app_module.get_db()
+        now = app_module.utc_now()
+        cursor = db.execute(
+            "INSERT INTO shipments (name,tracking_number,provider_name,created_at,updated_at) VALUES (?,?,?,?,?)",
+            ("Legacy parcel", "OLD123", "ship24", now, now),
+        )
+        db.execute(
+            "INSERT INTO events (shipment_id,event_key,event_time,description,location,created_at) VALUES (?,?,?,?,?,?)",
+            (cursor.lastrowid, "legacy-event", now, "Old scan", "Tel Aviv", now),
+        )
+        db.commit()
+        assert app_module.any_provider_enabled() is False
+        assert db.execute("SELECT description FROM events WHERE shipment_id=?", (cursor.lastrowid,)).fetchone()[0] == "Old scan"
+
+
+def test_manual_carrier_is_used_for_track123_and_preserved_on_empty_response(tmp_path, monkeypatch):
+    monkeypatch.setenv("TRACK123_API_KEY", "test-key")
+    flask_app = load_app(tmp_path, monkeypatch)
+    import app as app_module
+
+    calls = []
+    monkeypatch.setattr(app_module.track123_provider, "register", lambda number, carrier="": calls.append(("register", carrier)))
+    monkeypatch.setattr(app_module.track123_provider, "get_tracking", lambda number, carrier="": calls.append(("query", carrier)) or {"transitStatus": "NO_RECORD", "localLogisticsInfo": {"courierCode": "il-post"}})
+    with flask_app.test_client() as client:
+        login(client)
+        client.post("/shipments", data={"tracking_number": "LO436083025GB", "carrier_code": "royal-mail"})
+        assert calls == [("register", "royal-mail"), ("query", "royal-mail")]
+        with flask_app.app_context():
+            row = app_module.get_db().execute("SELECT carrier_code,carrier_override,provider_name FROM shipments WHERE tracking_number='LO436083025GB'").fetchone()
+            assert (row["carrier_code"], row["carrier_override"], row["provider_name"]) == ("royal-mail", "royal-mail", "track123")
+
+
+def test_edit_changes_registered_track123_carrier(tmp_path, monkeypatch):
+    monkeypatch.setenv("TRACK123_API_KEY", "test-key")
+    flask_app = load_app(tmp_path, monkeypatch)
+    import app as app_module
+
+    calls = []
+    monkeypatch.setattr(app_module.track123_provider, "register", lambda number, carrier="": calls.append(("register", carrier)))
+    monkeypatch.setattr(app_module.track123_provider, "change_courier", lambda number, old, new: calls.append(("change", old, new)))
+    monkeypatch.setattr(app_module.track123_provider, "get_tracking", lambda number, carrier="": calls.append(("query", carrier)) or None)
+    with flask_app.test_client() as client:
+        login(client)
+        client.post("/shipments", data={"tracking_number": "LO436083025GB", "carrier_code": "israel-post"})
+        client.post("/shipments/1/edit", data={"tracking_number": "LO436083025GB", "carrier_code": "royal-mail"})
+        assert ("change", "israel-post", "royal-mail") in calls
+        assert calls[-1] == ("query", "royal-mail")
+
+
+def test_automatic_carrier_detection_replaces_stale_provider_without_erasing_history(tmp_path, monkeypatch):
+    monkeypatch.setenv("TRACK123_API_KEY", "test-key")
+    flask_app = load_app(tmp_path, monkeypatch)
+    import app as app_module
+
+    monkeypatch.setattr(app_module.track123_provider, "register", lambda number, carrier="": None)
+    monkeypatch.setattr(app_module.track123_provider, "get_tracking", lambda number, carrier="": {
+        "transitStatus": "INIT", "localLogisticsInfo": {"courierCode": "royal-mail", "trackingDetails": []},
+    })
+    with flask_app.app_context():
+        db = app_module.get_db()
+        now = app_module.utc_now()
+        cursor = db.execute(
+            """INSERT INTO shipments (name,tracking_number,carrier_code,provider_name,status,latest_event,
+               created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)""",
+            ("Old parcel", "LO436083025GB", "il-post", "ship24", "info_received", "Old scan", now, now),
+        )
+        db.execute(
+            "INSERT INTO events (shipment_id,event_key,description,created_at) VALUES (?,?,?,?)",
+            (cursor.lastrowid, "old", "Old scan", now),
+        )
+        db.commit()
+        app_module.refresh_shipment(cursor.lastrowid, notify=False)
+        row = db.execute("SELECT * FROM shipments WHERE id=?", (cursor.lastrowid,)).fetchone()
+        assert (row["carrier_code"], row["provider_name"], row["status"], row["latest_event"]) == (
+            "royal-mail", "track123", "pending", None,
+        )
+        assert db.execute("SELECT COUNT(*) FROM events WHERE shipment_id=?", (cursor.lastrowid,)).fetchone()[0] == 1
